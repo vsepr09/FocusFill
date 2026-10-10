@@ -1,18 +1,38 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 비공개: 본인만 읽고 쓰기 (성별, 디톡스 대상, 리셋 이유, 메모, 참기 기록 등)
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+    // ===== ProFill =====
+    // 내 기록: 나만 읽고 쓰기
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
     }
-    match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-    // 공개 프로필: 닉네임, 진행 시간, 최장 기록, 친구 코드만 들어감
-    // (3단계에서 친구에게만 보이도록 좁힐 예정)
-    match /publicProfiles/{uid} {
+
+    // 친구 보기용 공개 정보: 로그인한 사람은 모두 읽기, 내 것만 쓰기
+    match /public/{userId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == uid;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null && request.auth.uid == userId
+        && request.resource.data.nickname is string
+        && request.resource.data.nickname.size() <= 20
+        && request.resource.data.date is string
+        && request.resource.data.pct is number
+        && request.resource.data.streak is number;
+    }
+
+    // ===== FocusFill =====
+    // 비공개: 성별, 디톡스 대상, 리셋 이유, 메모, 참기 기록 → 나만
+    match /focusfill_users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /focusfill_users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 친구 보기용: 닉네임, 진행 시간, 최장 기록, 친구 코드 → 로그인한 사람 읽기, 내 것만 쓰기
+    match /focusfill_public/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
   }
 }

@@ -3,6 +3,11 @@
   'use strict';
 
   // ---------- 상수 ----------
+  const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
+  const ID_RE = /^[a-z0-9_]{3,20}$/;
+  const idOf = (email) => (email || '').split('@')[0];
+  const COL_USERS = 'focusfill_users';   // ProFill 데이터(users, public)와 겹치지 않게 따로 저장
+  const COL_PUBLIC = 'focusfill_public';
   const MIN = 60 * 1000, HOUR = 60 * MIN, DAY = 24 * HOUR;
   const MILESTONES = [
     { ms: HOUR, label: '1시간' }, { ms: DAY, label: '1일' }, { ms: 3 * DAY, label: '3일' },
@@ -83,15 +88,6 @@
       onAuth(cb) { auth.onAuthStateChanged((u) => cb(u ? { uid: u.uid, email: u.email } : null)); },
       signUp: (e, p) => auth.createUserWithEmailAndPassword(e, p),
       signIn: (e, p) => auth.signInWithEmailAndPassword(e, p),
-      async google() {
-        const p = new firebase.auth.GoogleAuthProvider();
-        try { await auth.signInWithPopup(p); }
-        catch (e) {
-          if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'].includes(e.code)) {
-            await auth.signInWithRedirect(p);
-          } else throw e;
-        }
-      },
       signOut: () => auth.signOut(),
       async get(path) { const d = await fs.doc(path).get(); return d.exists ? d.data() : null; },
       set: (path, data) => fs.doc(path).set(data, { merge: true }),
@@ -101,17 +97,18 @@
   }
 
   const ERR = {
-    'auth/email-already-in-use': '이미 가입된 이메일이에요.',
-    'auth/invalid-email': '이메일 형식이 올바르지 않아요.',
+    'auth/email-already-in-use': '이미 있는 아이디예요. ProFill 계정이면 로그인으로 들어오세요.',
+    'auth/invalid-email': '아이디 또는 비밀번호가 맞지 않아요.',
     'auth/weak-password': '비밀번호는 6자 이상이어야 해요.',
-    'auth/invalid-credential': '이메일 또는 비밀번호가 틀렸어요.',
-    'auth/wrong-password': '이메일 또는 비밀번호가 틀렸어요.',
-    'auth/user-not-found': '가입되지 않은 이메일이에요.',
+    'auth/invalid-credential': '아이디 또는 비밀번호가 맞지 않아요.',
+    'auth/invalid-login-credentials': '아이디 또는 비밀번호가 맞지 않아요.',
+    'auth/wrong-password': '아이디 또는 비밀번호가 맞지 않아요.',
+    'auth/user-not-found': '아이디 또는 비밀번호가 맞지 않아요.',
     'auth/too-many-requests': '시도가 너무 많아요. 잠시 후 다시 해주세요.',
     'auth/network-request-failed': '인터넷 연결을 확인해 주세요.',
     'auth/popup-closed-by-user': '로그인 창이 닫혔어요.',
   };
-  const errMsg = (e) => ERR[e && e.code] || '문제가 생겼어요. 다시 시도해 주세요.';
+  const errMsg = (e) => ERR[e && e.code] || `처리하지 못했어요 (${(e && e.code) || '알 수 없음'}).`;
 
   // ---------- 상태 ----------
   let db = null;       // 저장소
@@ -119,8 +116,8 @@
   let U = null;        // users/{uid} 문서 (비공개)
   let tickTimer = null;
 
-  const userPath = () => `users/${me.uid}`;
-  const publicPath = () => `publicProfiles/${me.uid}`;
+  const userPath = () => `${COL_USERS}/${me.uid}`;
+  const publicPath = () => `${COL_PUBLIC}/${me.uid}`;
 
   // ---------- 화면 전환 ----------
   const SCREENS = ['screen-loading', 'screen-auth', 'screen-onboard', 'screen-app'];
@@ -150,33 +147,29 @@
         $('auth-pw2').required = signup;
         $('auth-submit').textContent = signup ? '가입하기' : '로그인';
         $('auth-pw').autocomplete = signup ? 'new-password' : 'current-password';
+        $('auth-hint').textContent = signup ? '비밀번호는 찾을 수 없으니 꼭 기억해 주세요. ProFill 계정이 있다면 가입 말고 로그인하세요.' : 'ProFill 아이디와 비밀번호로 바로 로그인할 수 있어요.';
         hide($('auth-error'));
       };
     });
 
     $('auth-form').onsubmit = async (ev) => {
       ev.preventDefault();
-      const email = $('auth-email').value.trim().toLowerCase();
+      const id = $('auth-id').value.trim().toLowerCase();
       const pw = $('auth-pw').value;
       const err = $('auth-error');
       hide(err);
+      if (!ID_RE.test(id)) { err.textContent = '아이디는 영어 소문자, 숫자, _ 로 3–20자예요.'; show(err); return; }
+      const email = `${id}@${EMAIL_DOMAIN}`;
       if (authMode === 'signup' && pw !== $('auth-pw2').value) {
         err.textContent = '비밀번호 확인이 일치하지 않아요.'; show(err); return;
       }
       if (pw.length < 6) { err.textContent = ERR['auth/weak-password']; show(err); return; }
-      const btn = $('auth-submit'); btn.disabled = true;
+      const btn = $('auth-submit'); btn.disabled = true; btn.textContent = '잠시만요';
       try {
         if (authMode === 'signup') await db.signUp(email, pw); else await db.signIn(email, pw);
       } catch (e) { err.textContent = errMsg(e); show(err); }
-      btn.disabled = false;
+      btn.disabled = false; btn.textContent = authMode === 'signup' ? '가입하기' : '로그인';
     };
-
-    if (db.google) {
-      show($('btn-google'));
-      $('btn-google').onclick = async () => {
-        try { await db.google(); } catch (e) { $('auth-error').textContent = errMsg(e); show($('auth-error')); }
-      };
-    }
   }
 
   // ---------- 온보딩 ----------
@@ -319,7 +312,7 @@
   }
 
   async function finishOnboarding(startAt) {
-    const nickname = $('ob-nick').value.trim();
+    const nickname = $('ob-nick').value.trim() || idOf(me.email);
     const friendCode = makeFriendCode();
     const ordered = obAllTargets().filter((t) => ob.targets.includes(t));
     U = {
@@ -338,7 +331,7 @@
     go('screen-app');
     $('greet').textContent = `${U.nickname}님, 오늘도 채워봐요`;
     $('my-code').textContent = U.friendCode || '-';
-    $('acc-email').textContent = me.email || '';
+    $('acc-email').textContent = '아이디 ' + idOf(me.email);
     $('acc-mode').textContent = db.mode === 'local' ? '테스트 모드 (이 기기에만 저장)' : '클라우드 저장 중';
     renderRules($('home-rules'), U.rules || [], false);
     renderUrgeCount();
@@ -544,7 +537,12 @@
     db.onAuth(async (user) => {
       me = user;
       clearInterval(tickTimer);
-      if (!user) { U = null; go('screen-auth'); return; }
+      if (!user) {
+        U = null;
+        document.querySelector('#auth-seg [data-mode=login]').click();
+        $('auth-pw').value = ''; $('auth-pw2').value = '';
+        go('screen-auth'); return;
+      }
       go('screen-loading');
       try { U = await db.get(userPath()); } catch (e) { U = null; }
       if (!U || !U.onboarded) {
