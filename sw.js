@@ -1,7 +1,7 @@
-// 홈 화면 앱용 최소 서비스 워커 (오프라인 시 기본 화면 표시)
-const CACHE = 'focusfill-v1';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'firebase-config.js', 'manifest.json', 'icon.svg'];
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES))); self.skipWaiting(); });
+// 홈 화면 앱용 서비스 워커: 항상 새 파일을 먼저 받고, 인터넷이 끊기면 저장해 둔 파일을 보여줘요.
+const CACHE = 'focusfill-v2';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'firebase-config.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))));
   self.clients.claim();
@@ -10,5 +10,5 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(fetch(e.request).then((r) => {
     const copy = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); return r;
-  }).catch(() => caches.match(e.request)));
+  }).catch(() => caches.match(e.request, { ignoreSearch: true })));
 });

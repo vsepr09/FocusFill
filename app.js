@@ -1,38 +1,117 @@
-/* FocusFill — 1단계: 계정, 온보딩, 진행 시간 타이머, 리셋(+이유/되돌리기), 참기 */
+/* FocusFill — 도파민 디톡스 기록 (ProFill과 같은 계정) */
 (() => {
   'use strict';
 
-  // ---------- 상수 ----------
+  /* ====================== 상수 ====================== */
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
-  const idOf = (email) => (email || '').split('@')[0];
-  const COL_USERS = 'focusfill_users';   // ProFill 데이터(users, public)와 겹치지 않게 따로 저장
-  const COL_PUBLIC = 'focusfill_public';
+  const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
+  const C = {
+    users: 'focusfill_users',      // 비공개 (본인만)
+    pub: 'focusfill_public',       // 친구에게 보이는 정보
+    codes: 'focusfill_codes',      // 친구 코드 → uid
+    req: 'focusfill_friendreq',    // 친구 요청/관계
+  };
   const MIN = 60 * 1000, HOUR = 60 * MIN, DAY = 24 * HOUR;
   const MILESTONES = [
-    { ms: HOUR, label: '1시간' }, { ms: DAY, label: '1일' }, { ms: 3 * DAY, label: '3일' },
-    { ms: 7 * DAY, label: '7일' }, { ms: 14 * DAY, label: '14일' }, { ms: 30 * DAY, label: '30일' },
-    { ms: 50 * DAY, label: '50일' }, { ms: 100 * DAY, label: '100일' },
+    { id: 'h1', ms: HOUR, label: '1시간', short: '1H', bonus: 5 },
+    { id: 'd1', ms: DAY, label: '1일', short: '1D', bonus: 20 },
+    { id: 'd3', ms: 3 * DAY, label: '3일', short: '3D', bonus: 40 },
+    { id: 'd7', ms: 7 * DAY, label: '7일', short: '7D', bonus: 80 },
+    { id: 'd14', ms: 14 * DAY, label: '14일', short: '14D', bonus: 120 },
+    { id: 'd30', ms: 30 * DAY, label: '30일', short: '30D', bonus: 200 },
+    { id: 'd50', ms: 50 * DAY, label: '50일', short: '50D', bonus: 300 },
+    { id: 'd100', ms: 100 * DAY, label: '100일', short: '100D', bonus: 500 },
   ];
+  const XP = { hour: 1, urgeWin: 10, journal: 5 };
+  const TITLES = ['새싹', '견습 수행자', '집중 입문자', '절제 수련생', '루틴 지킴이', '도파민 사냥꾼', '몰입 장인', '절제의 달인', '마인드 마스터', '전설의 수도승'];
   const BASE_TARGETS = ['쇼츠', '게임', '웹툰', 'SNS'];
   const MALE_TARGETS = ['야동', '딸'];
   const DEFAULT_ACTIVITIES = [
-    '물 한 잔 마시기', '1분 스트레칭', '문제 하나 풀기', '창밖 보며 심호흡 10번',
-    '책상 정리하기', '팔굽혀펴기 10개', '내일 할 일 3개 적기', '친구한테 말 걸기',
-    '세수하고 오기', '좋아하는 노래 한 곡 듣기',
+    '물 한 잔 마시기', '1분 스트레칭', '문제 하나 풀기', '창밖 보며 심호흡 10번', '책상 정리하기',
+    '팔굽혀펴기 10개', '내일 할 일 3개 적기', '친구한테 말 걸기', '세수하고 오기', '좋아하는 노래 한 곡 듣기',
   ];
+  const QUOTES = [
+    '지루함을 견디는 시간이 집중력이 자라는 시간이다.',
+    '오늘 참은 1분이 내일의 1시간을 만든다.',
+    '충동은 파도다. 타고 넘으면 지나간다.',
+    '빠른 재미 대신 느린 성취를 고르는 연습.',
+    '스크롤을 멈추면 내 시간이 다시 흐른다.',
+    '완벽하지 않아도 된다. 다시 시작하면 된다.',
+    '내가 내 주의력의 주인이다.',
+    '작은 승리가 쌓여서 습관이 된다.',
+    '심심함은 머리가 쉬는 소리다.',
+    '지금 버티는 나는 어제의 나보다 강하다.',
+    '도파민은 줄이고, 몰입은 늘리고.',
+    '무너진 날보다 다시 일어난 날을 세자.',
+    '한 번 더 참으면 한 칸 더 채워진다.',
+    '좋아하는 것보다 중요한 것을 먼저.',
+    '눈을 들어 지금 여기를 보자.',
+    '쉬운 길이 늘 좋은 길은 아니다.',
+    '오늘의 집중이 내일의 자유가 된다.',
+    '참는 게 아니라 고르는 거다.',
+    '하루를 채우는 건 내가 고른 것들이다.',
+    '조금 느려도 꾸준한 쪽이 이긴다.',
+  ];
+  const MOODS = ['😀', '🙂', '😐', '😕', '😣'];
+  const BUCKETS = [
+    { label: '새벽', from: 0, to: 6 }, { label: '오전', from: 6, to: 12 },
+    { label: '오후', from: 12, to: 18 }, { label: '저녁·밤', from: 18, to: 24 },
+  ];
+  const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+  const ICON = {
+    sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>',
+    moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
+    left: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+    right: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+    up: '<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>',
+    down: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+    x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    refresh: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>',
+    copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+    arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  };
 
+  /* ====================== 도우미 ====================== */
   const $ = (id) => document.getElementById(id);
+  const show = (el) => el && el.classList.remove('hidden');
+  const hide = (el) => el && el.classList.add('hidden');
   const pad = (n) => String(n).padStart(2, '0');
-  const show = (el) => el.classList.remove('hidden');
-  const hide = (el) => el.classList.add('hidden');
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const idOf = (email) => (email || '').split('@')[0];
+  const now = () => Date.now();
 
-  // ---------- 저장소: Firebase 또는 로컬 테스트 모드 ----------
+  function dayStart(ts) { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  function addDays(ts, n) { const d = new Date(ts); d.setDate(d.getDate() + n); return d.getTime(); }
+  function dateKey(ts) { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+  function weekStart(ts) { const d = new Date(dayStart(ts)); const off = (d.getDay() + 6) % 7; d.setDate(d.getDate() - off); return d.getTime(); }
+  function weekKey(ts = now()) { return dateKey(weekStart(ts)); }
+  function hm(ts) { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+  function md(ts) { const d = new Date(ts); return `${d.getMonth() + 1}월 ${d.getDate()}일`; }
+  function mdShort(ts) { const d = new Date(ts); return `${d.getMonth() + 1}.${d.getDate()}`; }
+
+  function fmtDur(ms) {
+    ms = Math.max(0, ms);
+    const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN);
+    if (d) return `${d}일 ${h}시간`;
+    if (h) return `${h}시간 ${m}분`;
+    return `${m}분`;
+  }
+  function fmtLive(ms) {
+    ms = Math.max(0, ms);
+    const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN), s = Math.floor((ms % MIN) / 1000);
+    return (d ? `${d}일 ` : '') + `${pad(h)}:${pad(m)}:${pad(s)}`;
+  }
+  const levelOf = (xp) => Math.floor(Math.sqrt(Math.max(0, xp) / 25)) + 1;
+  const xpForLevel = (lv) => 25 * (lv - 1) * (lv - 1);
+  const titleOf = (lv) => TITLES[Math.min(TITLES.length - 1, lv - 1)];
+
+  /* ====================== 저장소 ====================== */
   const cfg = window.FIREBASE_CONFIG || {};
   const useFirebase = !!(cfg.apiKey && !String(cfg.apiKey).startsWith('YOUR'));
-
   function authError(code) { const e = new Error(code); e.code = code; return e; }
 
+  // 테스트 모드: 모든 데이터를 이 브라우저에만 저장 (여러 계정 테스트 가능)
   function LocalBackend() {
     const KEY = 'focusfill_local_v1';
     let s;
@@ -41,11 +120,15 @@
     const save = () => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} };
     let listener = () => {};
     const userOf = (uid) => {
+      if (!uid) return null;
       const email = Object.keys(s.accounts).find((k) => s.accounts[k].uid === uid);
-      return uid ? { uid, email } : null;
+      return { uid, email };
     };
     const clone = (o) => JSON.parse(JSON.stringify(o));
     const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const children = (col) => Object.keys(s.docs)
+      .filter((p) => p.startsWith(col + '/') && !p.slice(col.length + 1).includes('/'))
+      .map((p) => ({ id: p.slice(col.length + 1), ...clone(s.docs[p]) }));
     return {
       mode: 'local',
       onAuth(cb) { listener = cb; cb(userOf(s.session)); },
@@ -64,6 +147,8 @@
       async set(path, data) { s.docs[path] = { ...(s.docs[path] || {}), ...clone(data) }; save(); },
       async add(col, data) { const id = newId(); s.docs[col + '/' + id] = clone(data); save(); return id; },
       async del(path) { delete s.docs[path]; save(); },
+      async list(col) { return children(col); },
+      async query(col, field, value) { return children(col).filter((d) => d[field] === value); },
     };
   }
 
@@ -76,13 +161,14 @@
   }
 
   async function FirebaseBackend() {
-    const v = '10.12.2', base = `https://www.gstatic.com/firebasejs/${v}/`;
+    const base = 'https://www.gstatic.com/firebasejs/10.12.2/';
     await loadScript(base + 'firebase-app-compat.js');
-    await loadScript(base + 'firebase-auth-compat.js');
-    await loadScript(base + 'firebase-firestore-compat.js');
+    await Promise.all([loadScript(base + 'firebase-auth-compat.js'), loadScript(base + 'firebase-firestore-compat.js')]);
     firebase.initializeApp(cfg);
     const auth = firebase.auth(), fs = firebase.firestore();
+    try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+    const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     return {
       mode: 'firebase',
       onAuth(cb) { auth.onAuthStateChanged((u) => cb(u ? { uid: u.uid, email: u.email } : null)); },
@@ -93,37 +179,55 @@
       set: (path, data) => fs.doc(path).set(data, { merge: true }),
       async add(col, data) { const r = await fs.collection(col).add(data); return r.id; },
       del: (path) => fs.doc(path).delete(),
+      async list(col) { return docs(await fs.collection(col).get()); },
+      async query(col, field, value) { return docs(await fs.collection(col).where(field, '==', value).get()); },
     };
   }
 
-  const ERR = {
+  const AUTH_ERR = {
     'auth/email-already-in-use': '이미 있는 아이디예요. ProFill 계정이면 로그인으로 들어오세요.',
-    'auth/invalid-email': '아이디 또는 비밀번호가 맞지 않아요.',
     'auth/weak-password': '비밀번호는 6자 이상이어야 해요.',
-    'auth/invalid-credential': '아이디 또는 비밀번호가 맞지 않아요.',
-    'auth/invalid-login-credentials': '아이디 또는 비밀번호가 맞지 않아요.',
-    'auth/wrong-password': '아이디 또는 비밀번호가 맞지 않아요.',
-    'auth/user-not-found': '아이디 또는 비밀번호가 맞지 않아요.',
-    'auth/too-many-requests': '시도가 너무 많아요. 잠시 후 다시 해주세요.',
+    'auth/too-many-requests': '시도가 너무 많았어요. 잠시 뒤 다시 해 주세요.',
     'auth/network-request-failed': '인터넷 연결을 확인해 주세요.',
-    'auth/popup-closed-by-user': '로그인 창이 닫혔어요.',
   };
-  const errMsg = (e) => ERR[e && e.code] || `처리하지 못했어요 (${(e && e.code) || '알 수 없음'}).`;
+  function authMsg(e) {
+    const code = e && e.code;
+    if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-login-credentials', 'auth/invalid-email'].includes(code)) return '아이디 또는 비밀번호가 맞지 않아요.';
+    return AUTH_ERR[code] || `처리하지 못했어요 (${code || '알 수 없음'}).`;
+  }
 
-  // ---------- 상태 ----------
-  let db = null;       // 저장소
-  let me = null;       // { uid, email }
-  let U = null;        // users/{uid} 문서 (비공개)
+  /* ====================== 상태 ====================== */
+  let db = null;          // 저장소
+  let me = null;          // { uid, email }
+  let U = null;           // 내 비공개 문서
+  const S = { streaks: [], urges: [], journal: {} };   // 내 기록
+  const F = { list: [], incoming: [], outgoing: [], rank: 'time', loaded: false, loading: false, msg: '' };
+  const ui = { tab: 'home', calMonth: null, selDay: null, weekOff: 1, editJournal: false, mood: null };
   let tickTimer = null;
 
-  const userPath = () => `${COL_USERS}/${me.uid}`;
-  const publicPath = () => `${COL_PUBLIC}/${me.uid}`;
+  const userPath = () => `${C.users}/${me.uid}`;
+  const pubPath = () => `${C.pub}/${me.uid}`;
 
-  // ---------- 화면 전환 ----------
+  function normalize(u) {
+    const d = {
+      nickname: idOf(me.email), gender: 'none', targets: [...BASE_TARGETS], rules: [], activities: [...DEFAULT_ACTIVITIES],
+      urgeMinutes: 10, startAt: now(), bestMs: 0, urgeWins: 0, urge: null, xp: 0, xpHours: 0, badges: {},
+      auto: { on: false, start: '18:30', end: '07:00' }, quotes: [],
+      share: { time: true, best: true, level: true, badges: true, urges: true },
+      reportSeen: '', friendCode: '', codeOk: false,
+    };
+    const out = { ...d, ...u };
+    out.auto = { ...d.auto, ...(u.auto || {}) };
+    out.share = { ...d.share, ...(u.share || {}) };
+    out.badges = u.badges || {};
+    if (!out.trackStart) out.trackStart = Math.min(out.startAt, u.createdAt || out.startAt);
+    return out;
+  }
+
+  /* ====================== 화면 전환 / 공통 UI ====================== */
   const SCREENS = ['screen-loading', 'screen-auth', 'screen-onboard', 'screen-app'];
   function go(id) { SCREENS.forEach((s) => (s === id ? show($(s)) : hide($(s)))); }
 
-  // ---------- 토스트 ----------
   let toastTimer = null;
   function toast(text, action, ms = 2600) {
     $('toast-text').textContent = text;
@@ -135,102 +239,150 @@
   }
   function hideToast() { hide($('toast')); clearTimeout(toastTimer); }
 
-  // ---------- 로그인 / 가입 ----------
-  let authMode = 'login';
-  function setupAuth() {
-    document.querySelectorAll('#auth-seg .seg-btn').forEach((b) => {
-      b.onclick = () => {
-        authMode = b.dataset.mode;
-        document.querySelectorAll('#auth-seg .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
-        const signup = authMode === 'signup';
-        $('auth-pw2').classList.toggle('hidden', !signup);
-        $('auth-pw2').required = signup;
-        $('auth-submit').textContent = signup ? '가입하기' : '로그인';
-        $('auth-pw').autocomplete = signup ? 'new-password' : 'current-password';
-        $('auth-hint').textContent = signup ? '비밀번호는 찾을 수 없으니 꼭 기억해 주세요. ProFill 계정이 있다면 가입 말고 로그인하세요.' : 'ProFill 아이디와 비밀번호로 바로 로그인할 수 있어요.';
-        hide($('auth-error'));
-      };
+  function openSheet(html, bind) {
+    $('sheet-body').innerHTML = html;
+    show($('modal-sheet'));
+    if (bind) bind($('sheet-body'));
+  }
+  function closeSheet() { hide($('modal-sheet')); }
+  function confirmSheet(title, body, okLabel, onOk, danger = true) {
+    openSheet(`<h2>${esc(title)}</h2><p class="muted">${esc(body)}</p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">취소</button>
+      <button class="btn ${danger ? 'danger' : 'primary'}" data-ok type="button">${esc(okLabel)}</button></div>`,
+    (el) => {
+      el.querySelector('[data-close]').onclick = closeSheet;
+      el.querySelector('[data-ok]').onclick = async () => { closeSheet(); await onOk(); };
     });
+  }
 
+  function applyTheme(t) {
+    if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+    else delete document.documentElement.dataset.theme;
+    try { if (t === 'dark' || t === 'light') localStorage.setItem('focusfill_theme', t); else localStorage.removeItem('focusfill_theme'); } catch (e) {}
+    const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const btn = $('theme-btn');
+    if (btn) { btn.innerHTML = dark ? ICON.sun : ICON.moon; btn.setAttribute('aria-label', dark ? '라이트 모드로' : '다크 모드로'); }
+    const meta = document.querySelector('meta[name=theme-color]');
+    if (meta) meta.content = dark ? '#121110' : '#F4F3F1';
+  }
+  function currentTheme() {
+    try { return localStorage.getItem('focusfill_theme') || 'system'; } catch (e) { return 'system'; }
+  }
+
+  /* ====================== 저장 ====================== */
+  async function saveUser(fields) {
+    Object.assign(U, fields);
+    try { await db.set(userPath(), fields); }
+    catch (e) { toast(navigator.onLine === false ? '인터넷이 끊겨 있어요. 연결되면 다시 저장해요.' : '저장하지 못했어요. 다시 시도해 주세요.'); throw e; }
+  }
+
+  function weekWins() {
+    const ws = weekStart(now());
+    return S.urges.filter((u) => u.result === 'win' && u.at >= ws).length;
+  }
+  function publicData() {
+    const sh = U.share;
+    return {
+      nickname: U.nickname,
+      startAt: sh.time ? U.startAt : null,
+      bestMs: sh.best ? U.bestMs : null,
+      level: sh.level ? levelOf(U.xp) : null,
+      badges: sh.badges ? Object.keys(U.badges).length : null,
+      weekWins: sh.urges ? weekWins() : null,
+      weekKey: weekKey(),
+      updatedAt: now(),
+    };
+  }
+  let pubTimer = null;
+  function savePublic(immediate) {
+    clearTimeout(pubTimer);
+    const run = () => db.set(pubPath(), publicData()).catch(() => {});
+    if (immediate) return run();
+    pubTimer = setTimeout(run, 800);
+  }
+
+  async function addXp(n) {
+    const before = levelOf(U.xp);
+    U.xp = (U.xp || 0) + n;
+    const after = levelOf(U.xp);
+    if (after > before) setTimeout(() => toast(`레벨 업! Lv.${after} ${titleOf(after)}`), 400);
+    return after > before;
+  }
+
+  /* ====================== 로그인 ====================== */
+  let authMode = 'login';
+  function setAuthMode(mode) {
+    authMode = mode;
+    document.querySelectorAll('#auth-seg .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.mode === mode));
+    const signup = mode === 'signup';
+    $('auth-pw2-wrap').classList.toggle('hidden', !signup);
+    $('auth-submit').textContent = signup ? '가입하기' : '로그인';
+    $('auth-pw').autocomplete = signup ? 'new-password' : 'current-password';
+    $('auth-hint').textContent = signup
+      ? '비밀번호는 찾을 수 없으니 꼭 기억해 주세요. ProFill 계정이 있다면 가입 말고 로그인하세요.'
+      : 'ProFill 아이디와 비밀번호로 바로 로그인할 수 있어요.';
+    $('auth-error').textContent = '';
+  }
+  function setupAuth() {
+    document.querySelectorAll('#auth-seg .seg-btn').forEach((b) => { b.onclick = () => setAuthMode(b.dataset.mode); });
     $('auth-form').onsubmit = async (ev) => {
       ev.preventDefault();
       const id = $('auth-id').value.trim().toLowerCase();
       const pw = $('auth-pw').value;
       const err = $('auth-error');
-      hide(err);
-      if (!ID_RE.test(id)) { err.textContent = '아이디는 영어 소문자, 숫자, _ 로 3–20자예요.'; show(err); return; }
+      err.textContent = '';
+      if (!ID_RE.test(id)) { err.textContent = '아이디는 영어 소문자, 숫자, _ 로 3–20자예요.'; return; }
+      if (pw.length < 6) { err.textContent = '비밀번호는 6자 이상이어야 해요.'; return; }
+      if (authMode === 'signup' && pw !== $('auth-pw2').value) { err.textContent = '비밀번호 확인이 일치하지 않아요.'; return; }
       const email = `${id}@${EMAIL_DOMAIN}`;
-      if (authMode === 'signup' && pw !== $('auth-pw2').value) {
-        err.textContent = '비밀번호 확인이 일치하지 않아요.'; show(err); return;
-      }
-      if (pw.length < 6) { err.textContent = ERR['auth/weak-password']; show(err); return; }
       const btn = $('auth-submit'); btn.disabled = true; btn.textContent = '잠시만요';
       try {
         if (authMode === 'signup') await db.signUp(email, pw); else await db.signIn(email, pw);
-      } catch (e) { err.textContent = errMsg(e); show(err); }
+      } catch (e) { err.textContent = authMsg(e); }
       btn.disabled = false; btn.textContent = authMode === 'signup' ? '가입하기' : '로그인';
     };
   }
 
-  // ---------- 온보딩 ----------
+  /* ====================== 온보딩 ====================== */
   const ob = { step: 0, gender: null, targets: [], custom: [], rules: [], start: null };
   const OB_STEPS = 5;
-
   function obAllTargets() {
     const list = [...BASE_TARGETS];
     if (ob.gender === 'male') list.push(...MALE_TARGETS);
     ob.custom.forEach((t) => { if (!list.includes(t)) list.push(t); });
     return list;
   }
-
   function renderObTargets() {
-    const box = $('ob-targets'); box.innerHTML = '';
-    obAllTargets().forEach((t) => {
-      const c = document.createElement('button');
-      c.className = 'chip' + (ob.targets.includes(t) ? ' selected' : '');
-      c.textContent = t;
+    $('ob-targets').innerHTML = obAllTargets().map((t) =>
+      `<button type="button" class="chip${ob.targets.includes(t) ? ' selected' : ''}" data-t="${esc(t)}">${esc(t)}</button>`).join('');
+    $('ob-targets').querySelectorAll('.chip').forEach((c) => {
       c.onclick = () => {
+        const t = c.dataset.t;
         ob.targets = ob.targets.includes(t) ? ob.targets.filter((x) => x !== t) : [...ob.targets, t];
         renderObTargets();
       };
-      box.appendChild(c);
     });
   }
-
-  function renderRules(listEl, rules, removable) {
-    listEl.innerHTML = '';
-    if (!rules.length) {
-      const li = document.createElement('li'); li.className = 'empty';
-      li.textContent = removable ? '아직 규칙이 없어요' : '설정에서 규칙을 추가할 수 있어요';
-      listEl.appendChild(li); return;
-    }
-    rules.forEach((r, i) => {
-      const li = document.createElement('li');
-      const tag = document.createElement('span');
-      tag.className = 'rule-tag ' + r.type; tag.textContent = r.type === 'ban' ? '금지' : '제한';
-      const tx = document.createElement('span'); tx.className = 'rule-text'; tx.textContent = r.text;
-      li.append(tag, tx);
-      if (removable) {
-        const del = document.createElement('button'); del.className = 'rule-del'; del.textContent = '✕';
-        del.setAttribute('aria-label', '삭제');
-        del.onclick = () => { rules.splice(i, 1); renderRules(listEl, rules, true); };
-        li.appendChild(del);
-      }
-      listEl.appendChild(li);
-    });
+  function ruleListHtml(rules, editable) {
+    if (!rules.length) return `<li class="empty">${editable ? '아직 규칙이 없어요' : '설정에서 규칙을 추가할 수 있어요'}</li>`;
+    return rules.map((r, i) => `<li><span class="rule-tag ${r.type === 'ban' ? 'ban' : 'limit'}">${r.type === 'ban' ? '금지' : '제한'}</span>
+      <span class="rule-text">${esc(r.text)}</span>${editable ? `<button type="button" class="rule-del" data-i="${i}" aria-label="삭제">✕</button>` : ''}</li>`).join('');
   }
-
+  function renderObRules() {
+    $('ob-rules').innerHTML = ruleListHtml(ob.rules, true);
+    $('ob-rules').querySelectorAll('.rule-del').forEach((b) => { b.onclick = () => { ob.rules.splice(+b.dataset.i, 1); renderObRules(); obShow(); }; });
+  }
   function obShow() {
     document.querySelectorAll('.ob-step').forEach((s) => s.classList.toggle('active', +s.dataset.step === ob.step));
     $('ob-dots').innerHTML = Array.from({ length: OB_STEPS }, (_, i) => `<span class="${i <= ob.step ? 'on' : ''}"></span>`).join('');
     $('ob-back').style.visibility = ob.step === 0 ? 'hidden' : 'visible';
     $('ob-next').textContent = ob.step === OB_STEPS - 1 ? '시작하기' : (ob.step === 3 && !ob.rules.length ? '건너뛰기' : '다음');
-    hide($('ob-error'));
+    $('ob-error').textContent = '';
     if (ob.step === 2) renderObTargets();
-    if (ob.step === 3) renderRules($('ob-rules'), ob.rules, true);
+    if (ob.step === 3) renderObRules();
   }
-
-  function obError(msg) { $('ob-error').textContent = msg; show($('ob-error')); }
+  const obError = (m) => { $('ob-error').textContent = m; };
+  function toLocalInput(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 
   function setupOnboarding() {
     document.querySelectorAll('#ob-gender .choice').forEach((b) => {
@@ -238,12 +390,10 @@
         const prev = ob.gender;
         ob.gender = b.dataset.v;
         document.querySelectorAll('#ob-gender .choice').forEach((x) => x.classList.toggle('selected', x === b));
-        // 남자 → 야동, 딸 자동 선택 / 남자가 아니게 바뀌면 빼기
         if (ob.gender === 'male' && prev !== 'male') MALE_TARGETS.forEach((t) => { if (!ob.targets.includes(t)) ob.targets.push(t); });
         if (ob.gender !== 'male') ob.targets = ob.targets.filter((t) => !MALE_TARGETS.includes(t) || ob.custom.includes(t));
       };
     });
-
     const addTarget = () => {
       const v = $('ob-target-input').value.trim();
       if (!v) return;
@@ -254,44 +404,37 @@
     };
     $('ob-target-add').onclick = addTarget;
     $('ob-target-input').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addTarget(); } };
-
     const addRule = () => {
       const v = $('ob-rule-input').value.trim();
       if (!v) return;
       ob.rules.push({ type: $('ob-rule-type').value, text: v });
       $('ob-rule-input').value = '';
-      renderRules($('ob-rules'), ob.rules, true);
-      obShow();
+      renderObRules(); obShow();
     };
     $('ob-rule-add').onclick = addRule;
     $('ob-rule-input').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addRule(); } };
-
     document.querySelectorAll('#ob-start .choice').forEach((b) => {
       b.onclick = () => {
         ob.start = b.dataset.v;
         document.querySelectorAll('#ob-start .choice').forEach((x) => x.classList.toggle('selected', x === b));
         const inp = $('ob-start-time');
         if (ob.start === 'past') {
-          show(inp);
-          const d = new Date(Date.now() - DAY);
-          inp.max = toLocalInput(new Date());
-          if (!inp.value) inp.value = toLocalInput(d);
+          show(inp); inp.max = toLocalInput(new Date());
+          if (!inp.value) inp.value = toLocalInput(new Date(now() - DAY));
         } else hide(inp);
       };
     });
-
     $('ob-back').onclick = () => { if (ob.step > 0) { ob.step--; obShow(); } };
     $('ob-next').onclick = async () => {
       if (ob.step === 0 && !$('ob-nick').value.trim()) return obError('닉네임을 입력해 주세요.');
       if (ob.step === 1 && !ob.gender) return obError('하나를 골라주세요.');
       if (ob.step === 2 && !ob.targets.length) return obError('하나 이상 골라주세요.');
       if (ob.step < OB_STEPS - 1) { ob.step++; return obShow(); }
-      // 마지막 단계
       if (!ob.start) return obError('시작 방법을 골라주세요.');
-      let startAt = Date.now();
+      let startAt = now();
       if (ob.start === 'past') {
         const t = new Date($('ob-start-time').value).getTime();
-        if (!t || t > Date.now()) return obError('지금보다 이전 시각을 입력해 주세요.');
+        if (!t || t > now()) return obError('지금보다 이전 시각을 입력해 주세요.');
         startAt = t;
       }
       $('ob-next').disabled = true;
@@ -300,215 +443,866 @@
     };
   }
 
-  function toLocalInput(d) {
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  function resetOnboarding() {
+    Object.assign(ob, { step: 0, gender: null, targets: [...BASE_TARGETS], custom: [], rules: [], start: null });
+    $('ob-nick').value = '';
+    document.querySelectorAll('#screen-onboard .choice').forEach((x) => x.classList.remove('selected'));
+    hide($('ob-start-time'));
   }
 
-  function makeFriendCode() {
+  async function finishOnboarding(startAt) {
+    const ordered = obAllTargets().filter((t) => ob.targets.includes(t));
+    const data = {
+      nickname: $('ob-nick').value.trim().slice(0, 12), gender: ob.gender, targets: ordered, rules: ob.rules,
+      activities: [...DEFAULT_ACTIVITIES], urgeMinutes: 10, startAt, trackStart: startAt, bestMs: 0, urgeWins: 0, urge: null,
+      xp: 0, xpHours: 0, badges: {}, onboarded: true, createdAt: now(),
+    };
+    U = normalize(data);
+    await db.set(userPath(), U);
+    S.streaks = []; S.urges = []; S.journal = {};
+    await enterApp();
+  }
+
+  /* ====================== 친구 코드 ====================== */
+  function makeCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let c = '';
     for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
     return c;
   }
-
-  async function finishOnboarding(startAt) {
-    const nickname = $('ob-nick').value.trim() || idOf(me.email);
-    const friendCode = makeFriendCode();
-    const ordered = obAllTargets().filter((t) => ob.targets.includes(t));
-    U = {
-      nickname, gender: ob.gender, targets: ordered, rules: ob.rules,
-      activities: DEFAULT_ACTIVITIES, urgeMinutes: 10,
-      startAt, bestMs: 0, urgeWins: 0, urge: null,
-      friendCode, onboarded: true, createdAt: Date.now(),
-    };
-    await db.set(userPath(), U);
-    await db.set(publicPath(), { nickname, startAt, bestMs: 0, friendCode });
-    enterApp();
+  async function ensureCode() {
+    if (U.codeOk && U.friendCode) return;
+    let code = U.friendCode || makeCode();
+    for (let i = 0; i < 6; i++) {
+      let ex = null;
+      try { ex = await db.get(`${C.codes}/${code}`); } catch (e) { ex = null; }
+      if (!ex || ex.uid === me.uid) break;
+      code = makeCode();
+    }
+    await db.set(`${C.codes}/${code}`, { uid: me.uid, nickname: U.nickname });
+    await saveUser({ friendCode: code, codeOk: true });
   }
 
-  // ---------- 메인 ----------
-  function enterApp() {
+  /* ====================== 앱 진입 ====================== */
+  async function loadRecords() {
+    const [streaks, urges, journal] = await Promise.all([
+      db.list(`${userPath()}/streaks`).catch(() => []),
+      db.list(`${userPath()}/urges`).catch(() => []),
+      db.list(`${userPath()}/journal`).catch(() => []),
+    ]);
+    S.streaks = streaks.sort((a, b) => a.end - b.end);
+    S.urges = urges.sort((a, b) => a.at - b.at);
+    S.journal = {};
+    journal.forEach((j) => { S.journal[j.id] = j; });
+  }
+
+  async function enterApp() {
     go('screen-app');
-    $('greet').textContent = `${U.nickname}님, 오늘도 채워봐요`;
-    $('my-code').textContent = U.friendCode || '-';
-    $('acc-email').textContent = '아이디 ' + idOf(me.email);
-    $('acc-mode').textContent = db.mode === 'local' ? '테스트 모드 (이 기기에만 저장)' : '클라우드 저장 중';
-    renderRules($('home-rules'), U.rules || [], false);
-    renderUrgeCount();
+    $('top-name').textContent = U.nickname;
+    $('profill-link').href = PROFILL_URL;
+    applyTheme(currentTheme());
+    ui.calMonth = null; ui.selDay = dateKey(now()); ui.editJournal = false; ui.mood = null;
+    ui.weekOff = U.trackStart < weekStart(now()) ? 1 : 0;
+    F.loaded = false;
+    switchTab('home');
     startTick();
     if (U.urge) openUrge(true);
+    ensureCode().then(() => savePublic(true)).catch(() => savePublic(true));
+    loadFriends(true);
   }
 
   function startTick() {
     clearInterval(tickTimer);
-    renderTimer();
-    tickTimer = setInterval(renderTimer, 1000);
+    tick();
+    tickTimer = setInterval(tick, 1000);
   }
 
-  function fmtDuration(ms) {
-    const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN);
-    if (d) return `${d}일 ${h}시간`;
-    if (h) return `${h}시간 ${m}분`;
-    return `${m}분`;
-  }
-
-  function renderTimer() {
+  /* ====================== 매초 갱신 ====================== */
+  let lastDay = dateKey(now());
+  function tick() {
     if (!U) return;
-    const now = Date.now();
-    const ms = Math.max(0, now - U.startAt);
-    const d = Math.floor(ms / DAY);
-    const h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN), s = Math.floor((ms % MIN) / 1000);
-    $('t-d').textContent = d;
-    $('t-clock').textContent = `${pad(h)}:${pad(m)}:${pad(s)}`;
+    const t = now();
+    const ms = Math.max(0, t - U.startAt);
+    if (ui.tab === 'home') updateHero(ms);
+    if (ui.tab === 'friends') document.querySelectorAll('[data-live]').forEach((el) => {
+      el.textContent = fmtLive(t - Number(el.dataset.live));
+    });
+    if (U.urge) renderUrge();
+    checkProgress(ms);
+    const dk = dateKey(t);
+    if (dk !== lastDay) { lastDay = dk; if (ui.tab === 'home') renderHome(); }
+  }
 
+  let progressBusy = false;
+  async function checkProgress(ms) {
+    if (progressBusy) return;
+    const hours = Math.floor(ms / HOUR);
+    let gained = 0;
+    const fields = {};
+    const newBadges = [];
+    if (hours > (U.xpHours || 0)) { gained += (hours - (U.xpHours || 0)) * XP.hour; fields.xpHours = hours; }
+    MILESTONES.forEach((m) => {
+      if (ms >= m.ms && !U.badges[m.id]) { U.badges[m.id] = now(); newBadges.push(m); gained += m.bonus; }
+    });
+    if (!gained && !newBadges.length) return;
+    progressBusy = true;
+    await addXp(gained);
+    fields.xp = U.xp;
+    if (newBadges.length) fields.badges = U.badges;
+    if (newBadges.length) toast(`배지 획득: ${newBadges.map((b) => b.label).join(', ')} 버티기 (+${newBadges.reduce((a, b) => a + b.bonus, 0)} XP)`, null, 4000);
+    try { await saveUser(fields); } catch (e) {}
+    savePublic();
+    progressBusy = false;
+    if (ui.tab === 'home') renderLevelCard();
+  }
+
+  /* ====================== 탭 ====================== */
+  function switchTab(tab) {
+    ui.tab = tab;
+    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
+    ['home', 'records', 'friends', 'settings'].forEach((n) => $('page-' + n).classList.toggle('hidden', n !== tab));
+    if (tab === 'home') renderHome();
+    if (tab === 'records') renderRecords();
+    if (tab === 'friends') { renderFriends(); loadFriends(); }
+    if (tab === 'settings') renderSettings();
+    window.scrollTo(0, 0);
+  }
+
+  /* ====================== 홈 ====================== */
+  function inAutoWindow(ts) {
+    if (!U.auto.on) return false;
+    const [sh, sm] = U.auto.start.split(':').map(Number), [eh, em] = U.auto.end.split(':').map(Number);
+    const d = new Date(ts), mins = d.getHours() * 60 + d.getMinutes();
+    const a = sh * 60 + sm, b = eh * 60 + em;
+    return a <= b ? mins >= a && mins < b : mins >= a || mins < b;
+  }
+
+  function quoteOfDay() {
+    const list = [...QUOTES, ...(U.quotes || [])];
+    const n = Math.floor(dayStart(now()) / DAY);
+    return list[((n % list.length) + list.length) % list.length];
+  }
+
+  function renderHome() {
+    const today = dateKey(now());
+    const j = S.journal[today];
+    const showReport = U.reportSeen !== weekKey() && U.trackStart < weekStart(now());
+    $('page-home').innerHTML = `
+      <section class="hero">
+        <div class="hero-top"><span class="live-dot"></span><span id="h-label">디톡스 진행 중</span>
+          <span class="record-chip hidden" id="h-record">신기록</span>
+          <span class="auto-chip hidden" id="h-auto">자동 디톡스 시간</span></div>
+        <div class="big"><span class="days"><b id="h-days">0</b><span>일</span></span><span class="clock" id="h-clock">00:00:00</span></div>
+        <div class="hero-meta"><span>최장 기록 <b id="h-best">-</b></span><span>시작 <b>${md(U.startAt)} ${hm(U.startAt)}</b></span></div>
+        <div class="badge-progress">
+          <div class="bar"><div class="fill" id="h-bar"></div></div>
+          <div class="bar-labels"><span id="h-bar-l"></span><span id="h-bar-r"></span></div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn primary" data-act="urge" type="button">참기</button>
+          <button class="btn danger-ghost" data-act="reset" type="button">리셋</button>
+        </div>
+        <p class="urge-note">${U.urgeWins ? `지금까지 충동을 <b>${U.urgeWins}번</b> 이겨냈어요` : '충동이 오면 참기 버튼을 눌러보세요'}</p>
+      </section>
+      ${showReport ? `<button class="report-banner" data-act="open-report" type="button"><span>지난주 리포트가 나왔어요</span>${ICON.arrow}</button>` : ''}
+      <div class="grid-2">
+        <section class="card">
+          <div class="sec-head"><h2>오늘의 규칙</h2><button class="link" data-act="goto-settings" type="button">편집</button></div>
+          <ul class="rule-list">${ruleListHtml(U.rules, false)}</ul>
+        </section>
+        <section class="card" id="level-card"></section>
+      </div>
+      <section class="card">
+        <div class="sec-head"><h2>한 줄 일기</h2>${j && !ui.editJournal ? '<button class="link" data-act="edit-journal" type="button">고치기</button>' : `<span class="muted small">${md(now())}</span>`}</div>
+        ${j && !ui.editJournal ? `<div class="journal-view"><span class="m">${esc(j.mood || '📝')}</span><p>${esc(j.text)}</p></div>` : `
+          <div class="moods">${MOODS.map((m) => `<button type="button" class="mood${(ui.mood || (j && j.mood)) === m ? ' selected' : ''}" data-mood="${m}">${m}</button>`).join('')}</div>
+          <div class="inline-add"><input id="journal-input" maxlength="80" placeholder="오늘 남는 시간에 뭘 했나요?" value="${esc(j ? j.text : '')}" />
+          <button class="btn primary" data-act="save-journal" type="button">저장</button></div>
+          ${j ? '' : `<p class="hint">처음 쓰면 +${XP.journal} XP</p>`}`}
+      </section>
+      <section class="card"><div class="quote">${esc(quoteOfDay())}</div></section>`;
+    renderLevelCard();
+    updateHero(Math.max(0, now() - U.startAt));
+  }
+
+  function renderLevelCard() {
+    const el = $('level-card');
+    if (!el) return;
+    const lv = levelOf(U.xp), cur = xpForLevel(lv), next = xpForLevel(lv + 1);
+    const pct = ((U.xp - cur) / (next - cur)) * 100;
+    el.innerHTML = `<div class="sec-head"><h2>레벨</h2><span class="muted small">${Object.keys(U.badges).length}/${MILESTONES.length} 배지</span></div>
+      <div class="level-row"><span class="lv">Lv.${lv}</span><span class="title">${titleOf(lv)}</span></div>
+      <div class="bar thin"><div class="fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="level-sub"><span>${U.xp} XP</span><span>다음 레벨까지 ${next - U.xp} XP</span></div>`;
+  }
+
+  function updateHero(ms) {
+    const dEl = $('h-days');
+    if (!dEl) return;
+    const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN), s = Math.floor((ms % MIN) / 1000);
+    dEl.textContent = d;
+    $('h-clock').textContent = `${pad(h)}:${pad(m)}:${pad(s)}`;
     const best = U.bestMs || 0;
-    const isRecord = ms > best && best > 0;
-    $('timer-label').textContent = isRecord ? '신기록 갱신 중' : '디톡스 진행 중';
-    $('best-line').textContent = best > 0 ? `최장 기록 ${fmtDuration(Math.max(best, ms))}` : '첫 기록을 쌓는 중이에요';
-
+    $('h-best').textContent = best || ms > MIN ? fmtDur(Math.max(best, ms)) : '첫 기록 쌓는 중';
+    $('h-record').classList.toggle('hidden', !(best > 0 && ms > best));
+    $('h-auto').classList.toggle('hidden', !inAutoWindow(now()));
     const next = MILESTONES.find((x) => x.ms > ms);
     if (next) {
-      const prevIdx = MILESTONES.indexOf(next) - 1;
-      const from = prevIdx >= 0 ? MILESTONES[prevIdx].ms : 0;
+      const i = MILESTONES.indexOf(next);
+      const from = i > 0 ? MILESTONES[i - 1].ms : 0;
       const pct = ((ms - from) / (next.ms - from)) * 100;
-      $('badge-bar').style.width = pct.toFixed(1) + '%';
-      $('badge-line').textContent = `다음 배지 ${next.label}까지 ${Math.floor(pct)}%`;
+      $('h-bar').style.width = pct.toFixed(2) + '%';
+      $('h-bar-l').innerHTML = `다음 배지 <b>${next.label}</b>`;
+      $('h-bar-r').textContent = `${fmtDur(next.ms - ms)} 남음`;
     } else {
-      $('badge-bar').style.width = '100%';
-      $('badge-line').textContent = '모든 배지를 모았어요';
+      $('h-bar').style.width = '100%';
+      $('h-bar-l').innerHTML = '<b>모든 배지 달성</b>';
+      $('h-bar-r').textContent = '';
     }
-
-    if (U.urge) renderUrge();
   }
 
-  function renderUrgeCount() {
-    const n = U.urgeWins || 0;
-    $('urge-count').textContent = n ? `지금까지 충동을 ${n}번 이겨냈어요` : '충동이 오면 참기 버튼을 눌러보세요';
+  async function saveJournal() {
+    const text = ($('journal-input').value || '').trim();
+    const key = dateKey(now());
+    const prev = S.journal[key];
+    const mood = ui.mood || (prev && prev.mood) || '';
+    if (!text) { toast('한 줄이라도 적어주세요'); return; }
+    const entry = { text, mood, updatedAt: now() };
+    try {
+      await db.set(`${userPath()}/journal/${key}`, entry);
+      S.journal[key] = { id: key, ...entry };
+      ui.editJournal = false; ui.mood = null;
+      if (!prev) { await addXp(XP.journal); await saveUser({ xp: U.xp }); savePublic(); toast(`일기 저장 (+${XP.journal} XP)`); } else toast('일기를 고쳤어요');
+    } catch (e) { toast('저장하지 못했어요'); }
+    renderHome();
   }
 
-  async function saveCore() {
-    await db.set(userPath(), { startAt: U.startAt, bestMs: U.bestMs });
-    await db.set(publicPath(), { startAt: U.startAt, bestMs: U.bestMs });
-  }
-
-  // ---------- 리셋 ----------
+  /* ====================== 리셋 ====================== */
   let resetReason = null;
   function openReset() {
     resetReason = null;
-    const ms = Date.now() - U.startAt;
-    $('reset-sub').textContent = `지금까지 ${fmtDuration(ms)} 버텼어요. 리셋하면 타이머가 0부터 다시 시작해요.`;
-    const box = $('reset-reasons'); box.innerHTML = '';
-    [...(U.targets || []), '기타'].forEach((t) => {
-      const c = document.createElement('button');
-      c.className = 'chip'; c.textContent = t;
+    $('reset-sub').textContent = `지금까지 ${fmtDur(now() - U.startAt)} 버텼어요. 리셋하면 타이머가 0부터 다시 시작해요. 경험치와 배지는 그대로 남아요.`;
+    const box = $('reset-reasons');
+    box.innerHTML = [...U.targets, '기타'].map((t) => `<button type="button" class="chip" data-t="${esc(t)}">${esc(t)}</button>`).join('');
+    box.querySelectorAll('.chip').forEach((c) => {
       c.onclick = () => {
-        resetReason = t;
+        resetReason = c.dataset.t;
         box.querySelectorAll('.chip').forEach((x) => x.classList.toggle('selected', x === c));
-        hide($('reset-error'));
+        $('reset-error').textContent = '';
       };
-      box.appendChild(c);
     });
     $('reset-memo').value = '';
-    hide($('reset-error'));
+    $('reset-error').textContent = '';
     show($('modal-reset'));
   }
 
   async function doReset() {
-    if (!resetReason) { $('reset-error').textContent = '이유를 하나 골라주세요.'; show($('reset-error')); return; }
-    const now = Date.now();
-    const dur = now - U.startAt;
-    const prev = { startAt: U.startAt, bestMs: U.bestMs || 0 };
+    if (!resetReason) { $('reset-error').textContent = '이유를 하나 골라주세요.'; return; }
+    const t = now();
+    const dur = t - U.startAt;
+    const prev = { startAt: U.startAt, bestMs: U.bestMs || 0, xpHours: U.xpHours || 0 };
+    const streak = { start: U.startAt, end: t, durationMs: dur, reason: resetReason, memo: $('reset-memo').value.trim() };
     $('reset-confirm').disabled = true;
     try {
-      const id = await db.add(`${userPath()}/streaks`, {
-        start: U.startAt, end: now, durationMs: dur, reason: resetReason, memo: $('reset-memo').value.trim(),
-      });
-      U.startAt = now;
-      U.bestMs = Math.max(prev.bestMs, dur);
-      await saveCore();
+      const id = await db.add(`${userPath()}/streaks`, streak);
+      S.streaks.push({ id, ...streak });
+      await saveUser({ startAt: t, bestMs: Math.max(prev.bestMs, dur), xpHours: 0 });
+      savePublic(true);
       hide($('modal-reset'));
-      renderTimer();
+      if (ui.tab === 'home') renderHome(); else if (ui.tab === 'records') renderRecords();
       toast('리셋했어요. 다시 시작!', () => undoReset(id, prev), 10000);
-    } catch (e) {
-      $('reset-error').textContent = '저장하지 못했어요. 다시 시도해 주세요.'; show($('reset-error'));
-    }
+    } catch (e) { $('reset-error').textContent = '저장하지 못했어요. 다시 시도해 주세요.'; }
     $('reset-confirm').disabled = false;
   }
 
   async function undoReset(id, prev) {
     try {
       await db.del(`${userPath()}/streaks/${id}`);
-      U.startAt = prev.startAt; U.bestMs = prev.bestMs;
-      await saveCore();
-      renderTimer();
+      S.streaks = S.streaks.filter((s) => s.id !== id);
+      await saveUser(prev);
+      savePublic(true);
+      if (ui.tab === 'home') renderHome(); else if (ui.tab === 'records') renderRecords();
       toast('되돌렸어요');
     } catch (e) { toast('되돌리지 못했어요'); }
   }
 
-  // ---------- 참기 ----------
+  /* ====================== 참기 ====================== */
   function pickActivity(except) {
-    const list = (U.activities && U.activities.length ? U.activities : DEFAULT_ACTIVITIES).filter((a) => a !== except);
+    const list = (U.activities.length ? U.activities : DEFAULT_ACTIVITIES).filter((a) => a !== except);
     return list[Math.floor(Math.random() * list.length)] || except;
   }
-
-  async function openUrge(resume) {
+  function openUrge(resume) {
     if (!resume) {
       const mins = U.urgeMinutes || 10;
-      const now = Date.now();
-      U.urge = { startedAt: now, endsAt: now + mins * MIN, minutes: mins, activity: pickActivity() };
+      const t = now();
+      U.urge = { startedAt: t, endsAt: t + mins * MIN, minutes: mins, activity: pickActivity() };
       db.set(userPath(), { urge: U.urge }).catch(() => {});
     }
     $('urge-activity').textContent = U.urge.activity;
     show($('urge'));
     renderUrge();
   }
-
   function renderUrge() {
-    const u = U.urge; if (!u) return;
-    const left = Math.max(0, u.endsAt - Date.now());
+    const u = U.urge;
+    if (!u) return;
+    const left = Math.max(0, u.endsAt - now());
     const total = u.endsAt - u.startedAt;
     const secs = Math.ceil(left / 1000);
     $('urge-clock').textContent = `${pad(Math.floor(secs / 60))}:${pad(secs % 60)}`;
-    $('urge-ring').style.width = (((total - left) / total) * 100).toFixed(1) + '%';
+    $('urge-bar').style.width = (((total - left) / total) * 100).toFixed(1) + '%';
     const done = left === 0;
     $('urge-title').textContent = done ? '버텼어요! 지금 기분은 어때요?' : '충동은 몇 분이면 지나가요';
     $('urge-running').classList.toggle('hidden', done);
     $('urge-done').classList.toggle('hidden', !done);
   }
-
   async function finishUrge(result) {
-    const u = U.urge; if (!u) return;
+    const u = U.urge;
+    if (!u) return;
     U.urge = null;
     hide($('urge'));
-    if (result === 'win') U.urgeWins = (U.urgeWins || 0) + 1;
-    renderUrgeCount();
+    const rec = { at: u.startedAt, minutes: u.minutes, activity: u.activity, result };
     try {
-      await db.add(`${userPath()}/urges`, { at: u.startedAt, minutes: u.minutes, activity: u.activity, result });
-      await db.set(userPath(), { urge: null, urgeWins: U.urgeWins || 0 });
+      const id = await db.add(`${userPath()}/urges`, rec);
+      S.urges.push({ id, ...rec });
     } catch (e) {}
-    if (result === 'win') toast('충동을 이겨냈어요!');
+    const fields = { urge: null };
+    if (result === 'win') {
+      fields.urgeWins = (U.urgeWins || 0) + 1;
+      await addXp(XP.urgeWin);
+      fields.xp = U.xp;
+    }
+    try { await saveUser(fields); } catch (e) {}
+    savePublic();
+    if (ui.tab === 'home') renderHome();
+    if (result === 'win') toast(`충동을 이겨냈어요! (+${XP.urgeWin} XP)`);
     else openReset();
   }
 
-  // ---------- 탭 ----------
-  function setupTabs() {
-    document.querySelectorAll('.tab').forEach((t) => {
-      t.onclick = () => {
-        document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
-        ['home', 'records', 'friends', 'settings'].forEach((name) =>
-          $('tab-' + name).classList.toggle('hidden', name !== t.dataset.tab));
-        window.scrollTo(0, 0);
-      };
-    });
+  /* ====================== 기록: 계산 ====================== */
+  function intervals() {
+    return [...S.streaks.map((s) => ({ start: s.start, end: s.end })), { start: U.startAt, end: now() }];
+  }
+  function overlap(a0, a1, b0, b1) { return Math.max(0, Math.min(a1, b1) - Math.max(a0, b0)); }
+  function bucketOf(ts) { const h = new Date(ts).getHours(); return BUCKETS.findIndex((b) => h >= b.from && h < b.to); }
+  function topOf(counts) {
+    let best = null, n = 0;
+    Object.keys(counts).forEach((k) => { if (counts[k] > n) { best = k; n = counts[k]; } });
+    return best;
+  }
+
+  function weekReport(ws) {
+    const we = addDays(ws, 7);
+    const resets = S.streaks.filter((s) => s.end >= ws && s.end < we);
+    const tries = S.urges.filter((u) => u.at >= ws && u.at < we);
+    const wins = tries.filter((u) => u.result === 'win').length;
+    const longest = Math.max(0, ...intervals().map((iv) => overlap(iv.start, iv.end, ws, Math.min(we, now()))));
+    const reasons = {}; resets.forEach((r) => { reasons[r.reason] = (reasons[r.reason] || 0) + 1; });
+    const buckets = {}; resets.forEach((r) => { const b = BUCKETS[bucketOf(r.end)].label; buckets[b] = (buckets[b] || 0) + 1; });
+    let jdays = 0;
+    for (let d = ws; d < we; d = addDays(d, 1)) if (S.journal[dateKey(d)]) jdays++;
+    return { resets: resets.length, tries: tries.length, wins, longest, topReason: topOf(reasons), weakBucket: topOf(buckets), jdays };
+  }
+
+  function dayInfo(key) {
+    const d0 = new Date(key + 'T00:00:00').getTime(), d1 = addDays(d0, 1);
+    const resets = S.streaks.filter((s) => s.end >= d0 && s.end < d1);
+    const urges = S.urges.filter((u) => u.at >= d0 && u.at < d1);
+    const wins = urges.filter((u) => u.result === 'win').length;
+    let status;
+    if (d0 > now()) status = 'future';
+    else if (d1 <= U.trackStart) status = 'before';
+    else if (resets.length) status = 'reset';
+    else status = wins >= 3 ? 'ok3' : wins >= 1 ? 'ok2' : 'ok1';
+    return { d0, d1, resets, urges, wins, status, autoKept: autoKept(d0) };
+  }
+
+  // 그날 시작한 자동 디톡스 시간대를 리셋 없이 지켰는지 (끝난 시간대만)
+  function autoKept(d0) {
+    if (!U.auto.on) return null;
+    const [sh, sm] = U.auto.start.split(':').map(Number), [eh, em] = U.auto.end.split(':').map(Number);
+    const a = d0 + (sh * 60 + sm) * MIN;
+    let b = d0 + (eh * 60 + em) * MIN;
+    if (b <= a) b = addDays(b, 1);
+    if (b > now() || a < U.trackStart) return null;
+    return !S.streaks.some((s) => s.end >= a && s.end < b);
+  }
+
+  /* ====================== 기록: 화면 ====================== */
+  function renderRecords() {
+    const el = $('page-records');
+    el.innerHTML = `${reportCard()}${calendarCard()}${statsCard()}${badgesCard()}`;
+    if (U.reportSeen !== weekKey() && ui.weekOff === 1) { saveUser({ reportSeen: weekKey() }).catch(() => {}); }
+  }
+
+  function reportCard() {
+    const ws = addDays(weekStart(now()), -7 * ui.weekOff);
+    const r = weekReport(ws), p = weekReport(addDays(ws, -7));
+    const label = ui.weekOff === 0 ? '이번 주 (진행 중)' : ui.weekOff === 1 ? '지난주' : `${ui.weekOff}주 전`;
+    const canPrev = ws > weekStart(U.trackStart);
+    const diff = r.resets - p.resets;
+    const notes = [];
+    if (r.topReason) notes.push(`가장 많이 무너진 이유는 <b>${esc(r.topReason)}</b>`);
+    if (r.weakBucket) notes.push(`가장 약했던 시간대는 <b>${r.weakBucket}</b>`);
+    if (!r.resets && ws + 7 * DAY <= now()) notes.push('한 번도 리셋하지 않은 완벽한 한 주였어요');
+    if (r.tries) notes.push(`참기 ${r.tries}번 중 <b>${r.wins}번</b> 이겨냈어요`);
+    return `<section class="card">
+      <div class="sec-head"><h2>주간 리포트</h2>
+        <div class="week-nav">
+          <button class="icon-btn small" data-act="week-prev" type="button" aria-label="이전 주" ${canPrev ? '' : 'disabled'}>${ICON.left}</button>
+          <span class="label">${label} · ${mdShort(ws)}–${mdShort(addDays(ws, 6))}</span>
+          <button class="icon-btn small" data-act="week-next" type="button" aria-label="다음 주" ${ui.weekOff > 0 ? '' : 'disabled'}>${ICON.right}</button>
+        </div></div>
+      <div class="tiles">
+        <div class="tile"><div class="k">리셋</div><div class="v">${r.resets}<small>번</small></div>
+          <div class="d ${diff > 0 ? 'up' : diff < 0 ? 'down' : ''}">${diff === 0 ? '전 주와 같아요' : `전 주보다 ${Math.abs(diff)}번 ${diff > 0 ? '많아요' : '적어요'}`}</div></div>
+        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>/ ${r.tries}</small></div><div class="d">시도 대비 성공</div></div>
+        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div><div class="d">이번 주 안에서</div></div>
+        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div><div class="d">7일 중</div></div>
+        <div class="tile"><div class="k">약한 시간대</div><div class="v" style="font-family:var(--font);font-size:1.15rem;padding-top:6px">${r.weakBucket || '-'}</div><div class="d">리셋이 가장 많았던</div></div>
+        <div class="tile"><div class="k">많던 이유</div><div class="v" style="font-family:var(--font);font-size:1.15rem;padding-top:6px">${esc(r.topReason || '-')}</div><div class="d">리셋 이유 1위</div></div>
+      </div>
+      ${notes.length ? `<ul class="report-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''}
+    </section>`;
+  }
+
+  function calendarCard() {
+    const base = ui.calMonth || (() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+    ui.calMonth = base;
+    const m = new Date(base);
+    const year = m.getFullYear(), month = m.getMonth();
+    const firstDow = new Date(year, month, 1).getDay();
+    const days = new Date(year, month + 1, 0).getDate();
+    const todayKey = dateKey(now());
+    let cells = DOW.map((d) => `<div class="dow">${d}</div>`).join('');
+    for (let i = 0; i < firstDow; i++) cells += '<div class="d blank"></div>';
+    for (let d = 1; d <= days; d++) {
+      const key = `${year}-${pad(month + 1)}-${pad(d)}`;
+      const info = dayInfo(key);
+      const cls = ['d', info.status, key === todayKey ? 'today' : '', key === ui.selDay ? 'sel' : ''].join(' ');
+      const dot = info.autoKept ? '<i class="dot" title="자동 디톡스 시간 지킴"></i>' : '';
+      const clickable = info.status !== 'future';
+      cells += clickable
+        ? `<button type="button" class="${cls}" data-act="sel-day" data-k="${key}" aria-label="${month + 1}월 ${d}일">${d}${dot}</button>`
+        : `<div class="${cls}">${d}</div>`;
+    }
+    const ts = new Date(U.trackStart);
+    const prevOk = new Date(year, month, 1).getTime() > new Date(ts.getFullYear(), ts.getMonth(), 1).getTime();
+    const nextOk = new Date(year, month + 1, 1).getTime() <= now();
+    return `<section class="card">
+      <div class="cal-head"><h2>${year}년 ${month + 1}월</h2>
+        <div class="week-nav"><button class="icon-btn small" data-act="cal-prev" type="button" aria-label="이전 달" ${prevOk ? '' : 'disabled'}>${ICON.left}</button>
+        <button class="icon-btn small" data-act="cal-next" type="button" aria-label="다음 달" ${nextOk ? '' : 'disabled'}>${ICON.right}</button></div></div>
+      <div class="cal">${cells}</div>
+      <div class="legend">
+        <span><i style="background:var(--heat-1)"></i>성공</span>
+        <span><i style="background:var(--heat-2)"></i>참기 1–2번</span>
+        <span><i style="background:var(--heat-3)"></i>참기 3번 이상</span>
+        <span><i style="background:var(--danger-soft);border:1px solid var(--danger)"></i>리셋</span>
+        ${U.auto.on ? '<span>● 자동 디톡스 시간 지킴</span>' : ''}
+      </div>
+      ${dayDetail(ui.selDay)}
+    </section>`;
+  }
+
+  function dayDetail(key) {
+    if (!key) return '';
+    const info = dayInfo(key);
+    if (info.status === 'future') return '';
+    const d = new Date(key + 'T00:00:00');
+    const j = S.journal[key];
+    const evs = [
+      ...info.resets.map((r) => ({ t: r.end, html: `<span class="tag r">리셋</span><span>${esc(r.reason)} · ${fmtDur(r.durationMs)} 버팀${r.memo ? ` · ${esc(r.memo)}` : ''}</span>` })),
+      ...info.urges.map((u) => ({ t: u.at, html: `<span class="tag ${u.result === 'win' ? 'w' : 'l'}">${u.result === 'win' ? '참기 성공' : '참기 실패'}</span><span>${esc(u.activity)}</span>` })),
+    ].sort((a, b) => a.t - b.t);
+    const status = info.status === 'before' ? '기록 시작 전' : info.status === 'reset' ? `리셋 ${info.resets.length}번` : '리셋 없이 지킨 날';
+    return `<div class="day-detail">
+      <h3>${d.getMonth() + 1}월 ${d.getDate()}일 (${DOW[d.getDay()]}) · <span class="muted">${status}</span></h3>
+      ${evs.length ? evs.map((e) => `<div class="ev"><span class="t">${hm(e.t)}</span>${e.html}</div>`).join('') : '<p class="empty">이날은 리셋·참기 기록이 없어요.</p>'}
+      ${j ? `<div class="ev"><span class="t">일기</span><span>${esc(j.mood || '')} ${esc(j.text)}</span></div>` : ''}
+      ${info.autoKept === true ? `<p class="muted small">자동 디톡스 시간(${U.auto.start}–${U.auto.end})을 지켰어요.</p>` : info.autoKept === false ? `<p class="muted small">자동 디톡스 시간(${U.auto.start}–${U.auto.end}) 중에 리셋이 있었어요.</p>` : ''}
+    </div>`;
+  }
+
+  function statsCard() {
+    const t = now();
+    const done = S.streaks;
+    const avg = done.length ? done.reduce((a, s) => a + s.durationMs, 0) / done.length : null;
+    const tries = S.urges.length, wins = S.urges.filter((u) => u.result === 'win').length;
+    const reasons = {}; done.forEach((s) => { reasons[s.reason] = (reasons[s.reason] || 0) + 1; });
+    const rList = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
+    const bCounts = BUCKETS.map(() => 0); done.forEach((s) => { bCounts[bucketOf(s.end)]++; });
+    const maxR = Math.max(1, ...rList.map((x) => x[1])), maxB = Math.max(1, ...bCounts);
+    let autoLine = '';
+    if (U.auto.on) {
+      let kept = 0, total = 0;
+      for (let d = dayStart(U.trackStart); d <= t; d = addDays(d, 1)) { const k = autoKept(d); if (k !== null) { total++; if (k) kept++; } }
+      autoLine = `<div class="tile"><div class="k">자동 디톡스 시간 지킴</div><div class="v">${kept}<small>/ ${total}일</small></div><div class="d">${U.auto.start}–${U.auto.end}</div></div>`;
+    }
+    const bar = (name, n, max) => `<div class="hbar"><span class="name">${esc(name)}</span><span class="track"><i style="width:${(n / max) * 100}%"></i></span><span class="n">${n}</span></div>`;
+    return `<section class="card">
+      <h2 style="margin-bottom:12px">통계</h2>
+      <div class="tiles">
+        <div class="tile"><div class="k">총 디톡스 시간</div><div class="v">${fmtDur(t - U.trackStart)}</div><div class="d">${md(U.trackStart)}부터</div></div>
+        <div class="tile"><div class="k">최장 기록</div><div class="v">${fmtDur(Math.max(U.bestMs || 0, t - U.startAt))}</div><div class="d">현재 기록 포함</div></div>
+        <div class="tile"><div class="k">평균 기록</div><div class="v">${avg == null ? '-' : fmtDur(avg)}</div><div class="d">리셋 ${done.length}번 기준</div></div>
+        <div class="tile"><div class="k">참기 성공</div><div class="v">${wins}<small>번</small></div><div class="d">성공률 ${tries ? Math.round((wins / tries) * 100) : 0}%</div></div>
+        <div class="tile"><div class="k">레벨</div><div class="v">Lv.${levelOf(U.xp)}</div><div class="d">${U.xp} XP</div></div>
+        ${autoLine}
+      </div>
+      <div class="grid-2" style="margin-top:18px">
+        <div><h3 style="margin-bottom:10px">리셋 이유</h3>
+          ${rList.length ? `<div class="hbars">${rList.map(([k, n]) => bar(k, n, maxR)).join('')}</div>` : '<p class="empty">아직 리셋한 적이 없어요.</p>'}</div>
+        <div><h3 style="margin-bottom:10px">리셋한 시간대</h3>
+          ${done.length ? `<div class="hbars">${BUCKETS.map((b, i) => bar(b.label, bCounts[i], maxB)).join('')}</div>` : '<p class="empty">기록이 쌓이면 보여드릴게요.</p>'}</div>
+      </div>
+    </section>`;
+  }
+
+  function badgesCard() {
+    return `<section class="card">
+      <div class="sec-head"><h2>배지</h2><span class="muted small">${Object.keys(U.badges).length}/${MILESTONES.length}</span></div>
+      <div class="badges">${MILESTONES.map((m) => {
+        const got = U.badges[m.id];
+        return `<div class="badge${got ? ' got' : ''}"><div class="medal">${m.short}</div><div class="bn">${m.label}</div>
+          <div class="bd">${got ? mdShort(got) + ' 획득' : `+${m.bonus} XP`}</div></div>`;
+      }).join('')}</div>
+      <p class="hint">한 번에 이어서 버틴 시간으로 받아요. 리셋해도 받은 배지는 사라지지 않아요.</p>
+    </section>`;
+  }
+
+  /* ====================== 친구 ====================== */
+  async function loadFriends(silent) {
+    if (F.loading) return;
+    F.loading = true;
+    try {
+      const [out, inc] = await Promise.all([db.query(C.req, 'from', me.uid), db.query(C.req, 'to', me.uid)]);
+      F.incoming = inc.filter((r) => r.status === 'pending');
+      F.outgoing = out.filter((r) => r.status === 'pending');
+      const accepted = [...out, ...inc].filter((r) => r.status === 'accepted');
+      const profs = await Promise.all(accepted.map((r) => db.get(`${C.pub}/${r.from === me.uid ? r.to : r.from}`).catch(() => null)));
+      F.list = accepted.map((r, i) => {
+        const uid = r.from === me.uid ? r.to : r.from;
+        const nick = r.from === me.uid ? r.toNick : r.fromNick;
+        return { uid, reqId: r.id, ...(profs[i] || { nickname: nick, missing: true }) };
+      });
+      F.loaded = true; F.msg = '';
+    } catch (e) {
+      F.msg = '친구 정보를 불러오지 못했어요.';
+    }
+    F.loading = false;
+    refreshFriendDot();
+    if (ui.tab === 'friends' && !silent) renderFriends();
+  }
+  function refreshFriendDot() { $('friend-dot').classList.toggle('hidden', !F.incoming.length); }
+
+  function rankValue(p, mode) {
+    if (mode === 'time') return p.startAt == null ? -1 : now() - p.startAt;
+    if (mode === 'level') return p.level == null ? -1 : p.level * 1e6 + (p.badges || 0);
+    if (mode === 'urges') return p.weekWins == null ? -1 : (p.weekKey === weekKey() ? p.weekWins : 0);
+    return 0;
+  }
+
+  function renderFriends() {
+    const mine = { uid: me.uid, isMe: true, ...publicData(), startAt: U.startAt, bestMs: U.bestMs, level: levelOf(U.xp), badges: Object.keys(U.badges).length, weekWins: weekWins() };
+    const people = [mine, ...F.list].sort((a, b) => rankValue(b, F.rank) - rankValue(a, F.rank));
+    const valueHtml = (p) => {
+      if (F.rank === 'time') return p.startAt == null ? '<span class="val hidden-val">비공개</span>' : `<span class="val" data-live="${p.startAt}">${fmtLive(now() - p.startAt)}</span>`;
+      if (F.rank === 'level') return p.level == null ? '<span class="val hidden-val">비공개</span>' : `<span class="val">Lv.${p.level}</span>`;
+      return p.weekWins == null ? '<span class="val hidden-val">비공개</span>' : `<span class="val">${p.weekKey === weekKey() ? p.weekWins : 0}번</span>`;
+    };
+    const subHtml = (p) => {
+      const bits = [];
+      if (p.bestMs != null) bits.push(`최장 ${fmtDur(p.bestMs)}`);
+      if (p.badges != null) bits.push(`배지 ${p.badges}개`);
+      if (F.rank !== 'level' && p.level != null) bits.push(`Lv.${p.level}`);
+      return bits.join(' · ') || (p.missing ? '아직 FocusFill을 시작하지 않았어요' : '');
+    };
+    $('page-friends').innerHTML = `
+      <section class="card">
+        <h2>내 친구 코드</h2>
+        <p class="muted small" style="margin:4px 0 12px">친구에게 이 코드를 알려주면 친구 요청을 보낼 수 있어요.</p>
+        <div class="code-row"><span class="friend-code">${esc(U.friendCode || '······')}</span>
+          <button class="btn small" data-act="copy-code" type="button">${ICON.copy}복사</button></div>
+      </section>
+      <section class="card">
+        <h2>친구 추가</h2>
+        <div class="inline-add" style="margin-top:12px"><input id="friend-code-input" maxlength="6" placeholder="친구 코드 6자리" autocapitalize="characters" autocorrect="off" spellcheck="false" />
+          <button class="btn primary" data-act="add-friend" type="button">요청 보내기</button></div>
+        <p class="form-err" id="friend-err">${esc(F.msg)}</p>
+        ${F.incoming.length || F.outgoing.length ? `<div style="margin-top:14px">
+          ${F.incoming.map((r) => `<div class="req"><span class="who">${esc(r.fromNick)} <span class="muted small">님이 친구 요청을 보냈어요</span></span>
+            <button class="btn small primary" data-act="accept" data-id="${esc(r.id)}" type="button">수락</button>
+            <button class="btn small ghost" data-act="decline" data-id="${esc(r.id)}" type="button">거절</button></div>`).join('')}
+          ${F.outgoing.map((r) => `<div class="req"><span class="who">${esc(r.toNick)} <span class="muted small">님의 수락을 기다리는 중</span></span>
+            <button class="btn small ghost" data-act="cancel-req" data-id="${esc(r.id)}" type="button">취소</button></div>`).join('')}
+        </div>` : ''}
+      </section>
+      <section class="card">
+        <div class="sec-head"><h2>순위</h2><button class="icon-btn small" data-act="refresh-friends" type="button" aria-label="새로고침">${ICON.refresh}</button></div>
+        <div class="seg">
+          <button class="seg-btn${F.rank === 'time' ? ' active' : ''}" data-act="rank" data-r="time" type="button">진행 시간</button>
+          <button class="seg-btn${F.rank === 'level' ? ' active' : ''}" data-act="rank" data-r="level" type="button">레벨</button>
+          <button class="seg-btn${F.rank === 'urges' ? ' active' : ''}" data-act="rank" data-r="urges" type="button">이번 주 참기</button>
+        </div>
+        <div class="rank-list">${people.map((p, i) => `
+          <div class="rank${p.isMe ? ' me' : ''}${i === 0 && people.length > 1 ? ' top1' : ''}">
+            <span class="pos">${i + 1}</span>
+            <div class="info"><div class="nm">${esc(p.nickname)}${p.isMe ? ' <span class="muted small">(나)</span>' : ''}</div><div class="sub">${subHtml(p)}</div></div>
+            ${valueHtml(p)}
+            ${p.isMe ? '' : `<button class="icon-btn small" data-act="remove-friend" data-id="${esc(p.reqId)}" data-n="${esc(p.nickname)}" type="button" aria-label="친구 삭제">${ICON.x}</button>`}
+          </div>`).join('')}</div>
+        ${!F.list.length && F.loaded ? '<p class="hint">아직 친구가 없어요. 위에서 친구 코드로 요청을 보내보세요.</p>' : ''}
+        ${!F.loaded ? '<p class="hint">불러오는 중…</p>' : ''}
+        <p class="hint">친구에게는 닉네임과 내가 공개한 항목만 보여요. 리셋 이유, 메모, 일기는 절대 보이지 않아요.</p>
+      </section>`;
+  }
+
+  async function addFriend() {
+    const err = $('friend-err');
+    const code = ($('friend-code-input').value || '').trim().toUpperCase();
+    err.textContent = '';
+    if (!/^[A-Z0-9]{6}$/.test(code)) { err.textContent = '코드는 6자리예요.'; return; }
+    if (code === U.friendCode) { err.textContent = '내 코드예요.'; return; }
+    let c = null;
+    try { c = await db.get(`${C.codes}/${code}`); } catch (e) { err.textContent = '확인하지 못했어요. 다시 시도해 주세요.'; return; }
+    if (!c) { err.textContent = '없는 코드예요. 다시 확인해 주세요.'; return; }
+    if (F.list.some((f) => f.uid === c.uid)) { err.textContent = '이미 친구예요.'; return; }
+    if (F.outgoing.some((r) => r.to === c.uid)) { err.textContent = '이미 요청을 보냈어요.'; return; }
+    try {
+      const rev = F.incoming.find((r) => r.from === c.uid);
+      if (rev) { await db.set(`${C.req}/${rev.id}`, { status: 'accepted', acceptedAt: now() }); toast(`${c.nickname}님과 친구가 됐어요`); }
+      else {
+        await db.set(`${C.req}/${me.uid}_${c.uid}`, { from: me.uid, to: c.uid, fromNick: U.nickname, toNick: c.nickname, status: 'pending', createdAt: now() });
+        toast(`${c.nickname}님에게 친구 요청을 보냈어요`);
+      }
+      await loadFriends();
+    } catch (e) { err.textContent = '요청을 보내지 못했어요.'; }
+  }
+
+  /* ====================== 설정 ====================== */
+  function renderSettings() {
+    const th = currentTheme();
+    const sw = (key, label, desc) => `<div class="set-row"><div><div class="lbl">${label}</div>${desc ? `<div class="desc">${desc}</div>` : ''}</div>
+      <label class="switch"><input type="checkbox" data-act="share" data-k="${key}" ${U.share[key] ? 'checked' : ''} /><span></span></label></div>`;
+    $('page-settings').innerHTML = `
+      <section class="card set-sec">
+        <h2>프로필</h2>
+        <div class="set-row"><div><div class="lbl">아이디</div><div class="desc">ProFill과 같은 계정이에요</div></div><b>${esc(idOf(me.email))}</b></div>
+        <div class="inline-add"><input id="set-nick" maxlength="12" value="${esc(U.nickname)}" placeholder="닉네임" /><button class="btn" data-act="save-nick" type="button">닉네임 저장</button></div>
+        <div><div class="lbl" style="margin-bottom:8px;font-weight:650">성별 <span class="muted small">(친구에게 안 보여요)</span></div>
+          <div class="seg">${[['male', '남자'], ['female', '여자'], ['none', '선택 안 함']].map(([v, l]) =>
+            `<button class="seg-btn${U.gender === v ? ' active' : ''}" data-act="gender" data-v="${v}" type="button">${l}</button>`).join('')}</div></div>
+      </section>
+
+      <section class="card set-sec">
+        <h2>디톡스 대상</h2>
+        <p class="muted small" style="margin-top:-6px">리셋할 때 고르는 이유 목록이에요.</p>
+        <div class="chips">${U.targets.map((t, i) => `<span class="chip">${esc(t)}<button class="x" data-act="del-target" data-i="${i}" type="button" aria-label="${esc(t)} 삭제">×</button></span>`).join('')}</div>
+        <div class="inline-add"><input id="set-target" maxlength="10" placeholder="새 대상" /><button class="btn" data-act="add-target" type="button">추가</button></div>
+      </section>
+
+      <section class="card set-sec">
+        <h2>나만의 규칙</h2>
+        <ul class="rule-list">${U.rules.length ? U.rules.map((r, i) => `<li><span class="rule-tag ${r.type === 'ban' ? 'ban' : 'limit'}">${r.type === 'ban' ? '금지' : '제한'}</span>
+          <span class="rule-text">${esc(r.text)}</span><span class="row-acts">
+          <button class="icon-btn small" data-act="rule-up" data-i="${i}" type="button" aria-label="위로" ${i === 0 ? 'disabled' : ''}>${ICON.up}</button>
+          <button class="icon-btn small" data-act="rule-down" data-i="${i}" type="button" aria-label="아래로" ${i === U.rules.length - 1 ? 'disabled' : ''}>${ICON.down}</button>
+          <button class="icon-btn small" data-act="rule-del" data-i="${i}" type="button" aria-label="삭제">${ICON.x}</button></span></li>`).join('') : '<li class="empty">아직 규칙이 없어요</li>'}</ul>
+        <div class="inline-add"><select id="set-rule-type"><option value="ban">금지</option><option value="limit">제한</option></select>
+          <input id="set-rule" maxlength="30" placeholder="예: 게임은 주말 1시간" /><button class="btn" data-act="add-rule" type="button">추가</button></div>
+      </section>
+
+      <section class="card set-sec">
+        <h2>참기</h2>
+        <div><div class="lbl" style="margin-bottom:8px;font-weight:650">참기 시간</div>
+          <div class="seg">${[5, 10, 15].map((m) => `<button class="seg-btn${U.urgeMinutes === m ? ' active' : ''}" data-act="urge-min" data-m="${m}" type="button">${m}분</button>`).join('')}</div></div>
+        <div class="lbl" style="font-weight:650">대체 활동</div>
+        <ul class="plain-list">${U.activities.map((a, i) => `<li><span>${esc(a)}</span><button class="icon-btn small" data-act="del-act" data-i="${i}" type="button" aria-label="삭제">${ICON.x}</button></li>`).join('')}</ul>
+        <div class="inline-add"><input id="set-act" maxlength="30" placeholder="새 대체 활동" /><button class="btn" data-act="add-act" type="button">추가</button></div>
+      </section>
+
+      <section class="card set-sec">
+        <h2>자동 디톡스 시간대</h2>
+        <div class="set-row"><div><div class="lbl">사용하기</div><div class="desc">이 시간대는 홈에 표시되고, 달력·통계에 지켰는지 따로 기록돼요.</div></div>
+          <label class="switch"><input type="checkbox" data-act="auto-on" ${U.auto.on ? 'checked' : ''} /><span></span></label></div>
+        <div class="time-row"><input type="time" id="auto-start" value="${U.auto.start}" ${U.auto.on ? '' : 'disabled'} /><span>부터</span>
+          <input type="time" id="auto-end" value="${U.auto.end}" ${U.auto.on ? '' : 'disabled'} /><span>까지</span>
+          <button class="btn small" data-act="auto-save" type="button" ${U.auto.on ? '' : 'disabled'}>저장</button></div>
+      </section>
+
+      <section class="card set-sec">
+        <h2>동기 문구</h2>
+        <p class="muted small" style="margin-top:-6px">홈 아래에 매일 하나씩 바뀌어 보여요. 내가 추가한 문구도 섞여 나와요.</p>
+        ${U.quotes.length ? `<ul class="plain-list">${U.quotes.map((q, i) => `<li><span>${esc(q)}</span><button class="icon-btn small" data-act="del-quote" data-i="${i}" type="button" aria-label="삭제">${ICON.x}</button></li>`).join('')}</ul>` : ''}
+        <div class="inline-add"><input id="set-quote" maxlength="60" placeholder="나만의 문구 추가" /><button class="btn" data-act="add-quote" type="button">추가</button></div>
+      </section>
+
+      <section class="card set-sec">
+        <h2>친구 공개 범위</h2>
+        <p class="muted small" style="margin-top:-6px">닉네임은 항상 보여요. 리셋 이유, 메모, 일기, 규칙, 성별은 절대 공개되지 않아요.</p>
+        ${sw('time', '현재 진행 시간')}${sw('best', '최장 기록')}${sw('level', '레벨')}${sw('badges', '배지 수')}${sw('urges', '이번 주 참기 성공 수')}
+      </section>
+
+      <section class="card set-sec">
+        <h2>화면</h2>
+        <div class="seg">${[['system', '기기 설정'], ['light', '라이트'], ['dark', '다크']].map(([v, l]) =>
+          `<button class="seg-btn${th === v ? ' active' : ''}" data-act="theme" data-v="${v}" type="button">${l}</button>`).join('')}</div>
+        <p class="muted small">아이패드 사파리에서 공유 버튼 → <b>홈 화면에 추가</b>를 누르면 앱처럼 쓸 수 있어요.</p>
+      </section>
+
+      <section class="card set-sec">
+        <h2>ProFill 연결</h2>
+        <p class="muted small" style="margin-top:-6px">같은 계정이라 따로 로그인하지 않아도 돼요.</p>
+        <a class="btn primary" href="${PROFILL_URL}">ProFill 열기 ${ICON.arrow}</a>
+      </section>
+
+      <section class="card set-sec">
+        <h2>계정</h2>
+        <p class="muted small" style="margin-top:-6px">${db.mode === 'local' ? '테스트 모드 · 이 기기에만 저장돼요' : '클라우드에 저장 중'}</p>
+        <div class="danger-zone"><button class="btn" data-act="logout" type="button">로그아웃</button></div>
+      </section>`;
+  }
+
+  async function settingsUpdate(fields, toastMsg, alsoPublic) {
+    try { await saveUser(fields); if (toastMsg) toast(toastMsg); } catch (e) {}
+    if (alsoPublic) savePublic(true);
+    renderSettings();
+  }
+
+  /* ====================== 클릭 처리 ====================== */
+  async function onAction(act, el) {
+    switch (act) {
+      case 'urge': return openUrge(false);
+      case 'reset': return openReset();
+      case 'open-report': ui.weekOff = 1; return switchTab('records');
+      case 'goto-settings': return switchTab('settings');
+      case 'edit-journal': ui.editJournal = true; return renderHome();
+      case 'save-journal': return saveJournal();
+      case 'week-prev': ui.weekOff++; return renderRecords();
+      case 'week-next': ui.weekOff = Math.max(0, ui.weekOff - 1); return renderRecords();
+      case 'cal-prev': { const d = new Date(ui.calMonth); d.setMonth(d.getMonth() - 1); ui.calMonth = d.getTime(); return renderRecords(); }
+      case 'cal-next': { const d = new Date(ui.calMonth); d.setMonth(d.getMonth() + 1); ui.calMonth = d.getTime(); return renderRecords(); }
+      case 'sel-day': ui.selDay = el.dataset.k; return renderRecords();
+
+      case 'copy-code':
+        try { await navigator.clipboard.writeText(U.friendCode); toast('친구 코드를 복사했어요'); } catch (e) { toast(`코드: ${U.friendCode}`); }
+        return;
+      case 'add-friend': return addFriend();
+      case 'accept': try { await db.set(`${C.req}/${el.dataset.id}`, { status: 'accepted', acceptedAt: now() }); toast('친구가 됐어요'); } catch (e) { toast('수락하지 못했어요'); } return loadFriends();
+      case 'decline': case 'cancel-req': try { await db.del(`${C.req}/${el.dataset.id}`); } catch (e) { toast('처리하지 못했어요'); } return loadFriends();
+      case 'remove-friend':
+        return confirmSheet('친구를 삭제할까요?', `${el.dataset.n}님과 서로 기록을 볼 수 없게 돼요.`, '삭제', async () => {
+          try { await db.del(`${C.req}/${el.dataset.id}`); toast('친구를 삭제했어요'); } catch (e) { toast('삭제하지 못했어요'); }
+          loadFriends();
+        });
+      case 'rank': F.rank = el.dataset.r; return renderFriends();
+      case 'refresh-friends': F.loaded = false; renderFriends(); return loadFriends();
+
+      case 'save-nick': {
+        const v = $('set-nick').value.trim().slice(0, 12);
+        if (!v) return toast('닉네임을 입력해 주세요');
+        $('top-name').textContent = v;
+        if (U.friendCode) db.set(`${C.codes}/${U.friendCode}`, { uid: me.uid, nickname: v }).catch(() => {});
+        return settingsUpdate({ nickname: v }, '닉네임을 바꿨어요', true);
+      }
+      case 'gender': {
+        const g = el.dataset.v;
+        let targets = [...U.targets];
+        if (g === 'male') MALE_TARGETS.forEach((t) => { if (!targets.includes(t)) targets.push(t); });
+        else targets = targets.filter((t) => !MALE_TARGETS.includes(t));
+        return settingsUpdate({ gender: g, targets });
+      }
+      case 'add-target': {
+        const v = $('set-target').value.trim();
+        if (!v || U.targets.includes(v)) return;
+        return settingsUpdate({ targets: [...U.targets, v] });
+      }
+      case 'del-target': {
+        if (U.targets.length <= 1) return toast('하나는 남겨 주세요');
+        return settingsUpdate({ targets: U.targets.filter((_, i) => i !== +el.dataset.i) });
+      }
+      case 'add-rule': {
+        const v = $('set-rule').value.trim();
+        if (!v) return;
+        return settingsUpdate({ rules: [...U.rules, { type: $('set-rule-type').value, text: v }] });
+      }
+      case 'rule-up': case 'rule-down': {
+        const i = +el.dataset.i, j = act === 'rule-up' ? i - 1 : i + 1;
+        const rules = [...U.rules];
+        [rules[i], rules[j]] = [rules[j], rules[i]];
+        return settingsUpdate({ rules });
+      }
+      case 'rule-del': return settingsUpdate({ rules: U.rules.filter((_, i) => i !== +el.dataset.i) });
+      case 'urge-min': return settingsUpdate({ urgeMinutes: +el.dataset.m });
+      case 'add-act': {
+        const v = $('set-act').value.trim();
+        if (!v) return;
+        return settingsUpdate({ activities: [...U.activities, v] });
+      }
+      case 'del-act': {
+        if (U.activities.length <= 1) return toast('하나는 남겨 주세요');
+        return settingsUpdate({ activities: U.activities.filter((_, i) => i !== +el.dataset.i) });
+      }
+      case 'auto-save': {
+        const s = $('auto-start').value, e = $('auto-end').value;
+        if (!s || !e || s === e) return toast('시작과 끝 시간을 다르게 정해 주세요');
+        return settingsUpdate({ auto: { ...U.auto, start: s, end: e } }, '자동 디톡스 시간을 저장했어요');
+      }
+      case 'add-quote': {
+        const v = $('set-quote').value.trim();
+        if (!v) return;
+        return settingsUpdate({ quotes: [...U.quotes, v] }, '문구를 추가했어요');
+      }
+      case 'del-quote': return settingsUpdate({ quotes: U.quotes.filter((_, i) => i !== +el.dataset.i) });
+      case 'theme': applyTheme(el.dataset.v === 'system' ? null : el.dataset.v); if (el.dataset.v === 'system') { try { localStorage.removeItem('focusfill_theme'); } catch (e) {} } return renderSettings();
+      case 'logout':
+        return confirmSheet('로그아웃할까요?', '기록은 계정에 그대로 남아 있어요.', '로그아웃', async () => {
+          clearInterval(tickTimer); U = null; await db.signOut();
+        }, false);
+      default:
+    }
+  }
+
+  async function onToggle(act, el) {
+    if (act === 'share') {
+      const share = { ...U.share, [el.dataset.k]: el.checked };
+      try { await saveUser({ share }); } catch (e) {}
+      savePublic(true);
+    }
+    if (act === 'auto-on') return settingsUpdate({ auto: { ...U.auto, on: el.checked } });
   }
 
   function setupApp() {
-    setupTabs();
-    $('btn-reset').onclick = openReset;
+    document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => switchTab(t.dataset.tab); });
+    document.addEventListener('click', (e) => {
+      const m = e.target.closest('[data-mood]');
+      if (m) {
+        ui.mood = m.dataset.mood;
+        document.querySelectorAll('.mood').forEach((x) => x.classList.toggle('selected', x === m));
+        return;
+      }
+      const el = e.target.closest('[data-act]');
+      if (!el || el.disabled || el.tagName === 'INPUT') return;
+      onAction(el.dataset.act, el);
+    });
+    document.addEventListener('change', (e) => {
+      const el = e.target.closest('input[data-act]');
+      if (el) onToggle(el.dataset.act, el);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !e.target.id) return;
+      const map = { 'journal-input': 'save-journal', 'friend-code-input': 'add-friend', 'set-nick': 'save-nick', 'set-target': 'add-target', 'set-rule': 'add-rule', 'set-act': 'add-act', 'set-quote': 'add-quote' };
+      if (map[e.target.id]) { e.preventDefault(); onAction(map[e.target.id], e.target); }
+    });
+    $('theme-btn').onclick = () => {
+      const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+      applyTheme(dark ? 'light' : 'dark');
+      if (ui.tab === 'settings') renderSettings();
+    };
     $('reset-cancel').onclick = () => hide($('modal-reset'));
     $('modal-reset').onclick = (e) => { if (e.target.id === 'modal-reset') hide($('modal-reset')); };
+    $('modal-sheet').onclick = (e) => { if (e.target.id === 'modal-sheet') closeSheet(); };
     $('reset-confirm').onclick = doReset;
-    $('btn-urge').onclick = () => openUrge(false);
     $('urge-shuffle').onclick = () => {
       U.urge.activity = pickActivity(U.urge.activity);
       $('urge-activity').textContent = U.urge.activity;
@@ -517,18 +1311,28 @@
     $('urge-giveup').onclick = () => finishUrge('lose');
     $('urge-lose').onclick = () => finishUrge('lose');
     $('urge-win').onclick = () => finishUrge('win');
-    $('btn-logout').onclick = async () => { clearInterval(tickTimer); await db.signOut(); };
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) renderTimer(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !U) return;
+      tick();
+      if (ui.tab === 'friends') loadFriends();
+    });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(currentTheme()));
+    const net = () => $('offline-bar').classList.toggle('hidden', navigator.onLine !== false);
+    addEventListener('online', net); addEventListener('offline', net); net();
+    setInterval(() => { if (U && ui.tab === 'friends' && !document.hidden) loadFriends(true).then(() => ui.tab === 'friends' && renderFriendsKeepInput()); }, 60000);
+  }
+  function renderFriendsKeepInput() {
+    const v = $('friend-code-input') ? $('friend-code-input').value : '';
+    const focused = document.activeElement && document.activeElement.id === 'friend-code-input';
+    renderFriends();
+    if ($('friend-code-input')) { $('friend-code-input').value = v; if (focused) $('friend-code-input').focus(); }
   }
 
-  // ---------- 시작 ----------
+  /* ====================== 시작 ====================== */
   async function boot() {
-    try {
-      db = useFirebase ? await FirebaseBackend() : LocalBackend();
-    } catch (e) {
-      console.warn('Firebase를 불러오지 못해 테스트 모드로 실행해요.', e);
-      db = LocalBackend();
-    }
+    applyTheme(currentTheme());
+    try { db = useFirebase ? await FirebaseBackend() : LocalBackend(); }
+    catch (e) { console.warn('Firebase를 불러오지 못해 테스트 모드로 실행해요.', e); db = LocalBackend(); }
     if (db.mode === 'local') show($('test-banner'));
     setupAuth();
     setupOnboarding();
@@ -537,27 +1341,26 @@
     db.onAuth(async (user) => {
       me = user;
       clearInterval(tickTimer);
+      hide($('urge')); hide($('modal-reset')); closeSheet();
       if (!user) {
-        U = null;
-        document.querySelector('#auth-seg [data-mode=login]').click();
+        U = null; F.list = []; F.incoming = []; F.outgoing = []; F.loaded = false;
+        setAuthMode('login');
         $('auth-pw').value = ''; $('auth-pw2').value = '';
-        go('screen-auth'); return;
+        go('screen-auth');
+        return;
       }
       go('screen-loading');
-      try { U = await db.get(userPath()); } catch (e) { U = null; }
-      if (!U || !U.onboarded) {
-        Object.assign(ob, { step: 0, gender: null, targets: [...BASE_TARGETS], custom: [], rules: [], start: null });
-        $('ob-nick').value = '';
-        document.querySelectorAll('#screen-onboard .choice').forEach((x) => x.classList.remove('selected'));
-        hide($('ob-start-time'));
-        go('screen-onboard');
-        obShow();
-      } else enterApp();
+      let data = null;
+      try { data = await db.get(userPath()); } catch (e) { data = null; }
+      if (!data || !data.onboarded) { resetOnboarding(); go('screen-onboard'); obShow(); return; }
+      U = normalize(data);
+      await loadRecords();
+      await enterApp();
     });
   }
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
   }
   boot();
 })();

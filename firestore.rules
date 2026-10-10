@@ -21,18 +21,47 @@ service cloud.firestore {
     }
 
     // ===== FocusFill =====
-    // 비공개: 성별, 디톡스 대상, 리셋 이유, 메모, 참기 기록 → 나만
-    match /focusfill_users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-    match /focusfill_users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function signedIn() { return request.auth != null; }
+    function isFriend(other) {
+      let a = /databases/$(database)/documents/focusfill_friendreq/$(request.auth.uid + '_' + other);
+      let b = /databases/$(database)/documents/focusfill_friendreq/$(other + '_' + request.auth.uid);
+      return (exists(a) && get(a).data.status == 'accepted') || (exists(b) && get(b).data.status == 'accepted');
     }
 
-    // 친구 보기용: 닉네임, 진행 시간, 최장 기록, 친구 코드 → 로그인한 사람 읽기, 내 것만 쓰기
+    // 비공개: 성별, 디톡스 대상, 규칙, 리셋 이유, 메모, 참기 기록, 일기 → 나만
+    match /focusfill_users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+    match /focusfill_users/{userId}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    // 친구 보기용: 닉네임과 공개를 켠 항목만 → 나와 친구만 읽기, 내 것만 쓰기
     match /focusfill_public/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if signedIn() && (request.auth.uid == userId || isFriend(userId));
+      allow write: if signedIn() && request.auth.uid == userId;
+    }
+
+    // 친구 코드 → uid (코드를 알아야만 조회 가능, 목록 보기는 불가)
+    match /focusfill_codes/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.uid == request.auth.uid
+        && (request.method == 'delete' || request.resource.data.uid == request.auth.uid);
+    }
+
+    // 친구 요청/관계: 문서 이름은 "보낸사람_받는사람"
+    match /focusfill_friendreq/{reqId} {
+      allow read: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.to != request.auth.uid
+        && reqId == request.auth.uid + '_' + request.resource.data.to
+        && request.resource.data.status == 'pending';
+      allow update: if signedIn() && resource.data.to == request.auth.uid
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt']);
+      allow delete: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
     }
   }
 }

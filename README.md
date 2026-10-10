@@ -12,7 +12,8 @@ Firebase 콘솔 → ProFill 프로젝트 → Firestore → 규칙 탭에 `firest
 (ProFill 규칙 + FocusFill 규칙이 합쳐져 있어요.)
 
 ## 데이터 구조
-- `focusfill_users/{uid}` (본인만): 닉네임, 성별, 디톡스 대상, 규칙, 시작 시각, 최장 기록, 참기 성공 수, 진행 중인 참기
-- `focusfill_users/{uid}/streaks` (본인만): 지난 기록 (시작, 끝, 걸린 시간, 이유, 메모)
-- `focusfill_users/{uid}/urges` (본인만): 참기 기록 (시각, 시간, 대체 활동, 결과)
-- `focusfill_public/{uid}` (친구용): 닉네임, 시작 시각, 최장 기록, 친구 코드
+- `focusfill_users/{uid}` (본인만): 닉네임, 성별, 디톡스 대상, 규칙, 대체 활동, 참기 시간, 자동 디톡스 시간대, 동기 문구, 공개 범위, 시작 시각, 최장 기록, 경험치, 배지
+- `focusfill_users/{uid}/streaks` · `/urges` · `/journal` (본인만): 리셋 기록, 참기 기록, 한 줄 일기
+- `focusfill_public/{uid}` (나와 친구만): 닉네임 + 공개를 켠 항목(진행 시간, 최장 기록, 레벨, 배지 수, 이번 주 참기)
+- `focusfill_codes/{코드}`: 친구 코드 → 계정 (코드를 알아야만 조회)
+- `focusfill_friendreq/{보낸사람_받는사람}`: 친구 요청/관계
