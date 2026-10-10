@@ -614,3 +614,56 @@ input[type="time"] { width: auto; }
 .ex-tag.on { background: #F5B700; color: #2A1E00; }
 .ex-tag.done { background: var(--surface); color: var(--muted); }
 .cal .d.off { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
+
+/* v1.4.0 — 홈 위쪽: 타이머 + 오른쪽 레벨/시험 */
+.hero-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.hero-left { flex: 1; min-width: 0; }
+.hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; flex-shrink: 0; padding-top: 2px; }
+.lv-widget { display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 10px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.lv-ring { position: relative; width: 60px; height: 60px; flex-shrink: 0; }
+.lv-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.lv-track { fill: none; stroke: var(--surface-2); stroke-width: 6; }
+.lv-arc { fill: none; stroke: var(--accent); stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+.lv-num { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; font-family: var(--num); font-size: 1.45rem; font-weight: 700; line-height: .9; color: var(--accent); }
+.lv-num small { display: block; font-size: .62rem; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+.lv-info { display: grid; gap: 2px; }
+.lv-info b { font-size: .95rem; white-space: nowrap; }
+.lv-info span { font-family: var(--num); font-size: .95rem; color: var(--muted); white-space: nowrap; }
+.hero-meta .acc { color: var(--accent); font-family: var(--num); font-size: 1.05rem; }
+
+.exam-box {
+  display: grid; justify-items: end; gap: 0; padding: 10px 16px; border-radius: 16px;
+  background: #F5B700; color: #2A1E00; min-width: 150px; text-align: right;
+}
+.ex-d { font-size: 3rem; font-weight: 700; line-height: .95; letter-spacing: -0.01em; }
+.ex-name { font-weight: 750; font-size: .9rem; }
+.ex-x { font-size: .74rem; font-weight: 700; opacity: .75; }
+
+@media (max-width: 640px) {
+  .hero-main { flex-direction: column; gap: 14px; }
+  .hero-side { flex-direction: row; align-items: stretch; width: 100%; }
+  .hero-side > * { flex: 1; }
+  .exam-box { justify-items: start; text-align: left; min-width: 0; }
+  .ex-d { font-size: 2.4rem; }
+}
+
+/* 나의 문장 (내가 추가한 문구) */
+.my-quote-card {
+  position: relative; overflow: hidden; border-radius: 16px; padding: 18px 20px 20px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #F5B700));
+  color: #fff; box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.my-quote-card::after { content: "”"; position: absolute; right: 14px; bottom: -34px; font-size: 9rem; font-weight: 800; line-height: 1; opacity: .18; }
+.mq-tag { font-size: .76rem; font-weight: 800; letter-spacing: .04em; opacity: .9; }
+.mq-text { position: relative; margin-top: 8px; font-size: 1.25rem; font-weight: 800; line-height: 1.45; letter-spacing: -0.01em; }
+:root[data-theme="dark"] .my-quote-card { color: #1E0C02; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .my-quote-card { color: #1E0C02; } }
+.quote-card .quote { margin: 0; }
+
+/* 사용법 */
+.guide { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.guide li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.g-ic { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: 1rem; }
+.guide b { font-size: .95rem; }
+.guide p { font-size: .86rem; color: var(--muted); margin-top: 1px; }
+.set-row h2 { margin: 0; }

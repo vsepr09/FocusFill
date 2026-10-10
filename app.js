@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -28,7 +28,6 @@
   // 연속 배수: 오래 버틸수록 모든 보상이 커져요 (시험 기간엔 여기에 2배 더)
   const MULT_TIERS = [{ ms: 30 * DAY, x: 2, label: '30일' }, { ms: 7 * DAY, x: 1.5, label: '7일' }, { ms: 3 * DAY, x: 1.2, label: '3일' }];
   const ATTEND_REWARDS = [5, 5, 10, 10, 15, 15, 50];
-  const PLEDGES = ['오늘은 쇼츠 안 보기', '공부할 땐 기기 멀리 두기', '자기 전 30분 화면 끄기', '충동이 오면 참기 누르기', '쉬는 시간엔 화면 대신 걷기'];
   const PLEDGE_CHECK_HOUR = 16;
   const PLEDGE_MAX = 5, PLEDGE_XP_MAX = 3;
   const GOAL_MAX = 5;
@@ -554,6 +553,7 @@
     S.streaks = []; S.urges = []; S.journal = {};
     obKeep = {};
     await enterApp();
+    openGuide(true);
   }
 
   /* ====================== 친구 코드 ====================== */
@@ -779,10 +779,9 @@
     const used = list.filter((g) => !cur || g.id !== cur.id).map((g) => g.type);
     let type = cur ? cur.type : Object.keys(GOAL_TYPES).find((k) => !used.includes(k)) || 'wins_min';
     const m = Number(mk.split('-')[1]);
-    openSheet(`<h2>${m}월 목표 ${cur ? '바꾸기' : '추가'}</h2><p class="muted">목표마다 달성하면 +${XP.monthGoal} XP (배수 적용)</p>
+    openSheet(`<h2>${m}월 목표 ${cur ? '바꾸기' : '추가'}</h2>
       <p class="label">무엇을</p>
       <div class="chips" id="goal-type">${Object.entries(GOAL_TYPES).map(([k, t]) => `<button type="button" class="chip${used.includes(k) ? ' used' : ''}" data-k="${k}" ${used.includes(k) ? 'disabled' : ''}>${t.name}</button>`).join('')}</div>
-      <p class="muted small" id="goal-desc" style="margin-top:10px"></p>
       <p class="label">얼마나</p>
       <div class="time-row"><input type="number" id="goal-n" min="1" max="99" inputmode="numeric" style="width:6em" /><span id="goal-unit"></span></div>
       <p class="form-err" id="goal-err"></p>
@@ -792,7 +791,6 @@
       const sync = () => {
         el.querySelectorAll('#goal-type .chip').forEach((b) => b.classList.toggle('selected', b.dataset.k === type));
         $('goal-unit').textContent = GOAL_TYPES[type].unit;
-        $('goal-desc').textContent = GOAL_TYPES[type].desc;
         $('goal-n').value = cur && cur.type === type ? cur.n : GOAL_TYPES[type].def;
       };
       sync();
@@ -941,16 +939,12 @@
     const canCheck = hr >= PLEDGE_CHECK_HOUR;
     const kept = list.filter((p) => p.check === 'yes').length;
     const left = PLEDGE_MAX - list.length;
-    const xpLeft = PLEDGE_XP_MAX - (dailyOf(k).pledgeXpCount || 0);
-    const unused = PLEDGES.filter((t) => !list.some((p) => p.text === t));
     return `<section class="card pledge-card">
-      <div class="sec-head"><h2>오늘의 다짐</h2><span class="muted small">${list.length ? `${kept}/${list.length} 지킴` : `최대 ${PLEDGE_MAX}개`}</span></div>
-      ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐, 지켰나요?</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, true)).join('')}</ul>` : ''}
-      ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, canCheck)).join('')}</ul>` : '<p class="muted small" style="margin-bottom:10px">오늘 지킬 것을 정해요. 저녁에 하나씩 지켰는지 체크해요.</p>'}
-      ${list.length && !canCheck && list.some((p) => !p.check) ? `<p class="hint" style="margin-top:6px">오후 ${PLEDGE_CHECK_HOUR - 12}시부터 체크할 수 있어요. 저녁에 못 하면 내일 정오 전까지 해도 돼요.</p>` : ''}
+      <div class="sec-head"><h2>오늘의 다짐</h2>${list.length ? `<span class="muted small">${kept}/${list.length}</span>` : ''}</div>
+      ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, true)).join('')}</ul>` : ''}
+      ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, canCheck)).join('')}</ul>` : ''}
       ${left > 0 ? `<div class="pl-add">
-        ${unused.length ? `<div class="chips">${unused.map((p) => `<button type="button" class="chip" data-act="pick-pledge" data-p="${esc(p)}">${ICON.plus}${esc(p)}</button>`).join('')}</div>` : ''}
-        <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="직접 쓰기" /><button class="btn primary" data-act="make-pledge" type="button">다짐 추가${xpLeft > 0 ? ` +${Math.round(XP.pledge * mult())}` : ''}</button></div></div>` : ''}
+        <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="오늘의 다짐" /><button class="btn primary" data-act="make-pledge" type="button">추가</button></div></div>` : ''}
     </section>`;
   }
   async function makePledge(text) {
@@ -996,27 +990,23 @@
       const t = GOAL_TYPES[g.type] || GOAL_TYPES.wins_min;
       const pct = Math.min(100, (cur / g.n) * 100);
       const unit1 = t.unit.slice(0, 1);
-      const line = t.max
-        ? (state === 'fail' ? `${g.n}번을 넘었어요 (${cur}번)` : `${cur}번 · 앞으로 ${g.n - cur}번까지 괜찮아요`)
-        : (state === 'done' ? '달성!' : `${cur}${unit1} / ${g.n}${unit1} · ${daysLeft}일 남음`);
+      const line = `${cur}${unit1} / ${g.n}${unit1}`;
       return `<button type="button" class="goal-row ${state}" data-act="edit-goal" data-id="${esc(g.id)}">
         <span class="goal-top"><b>${goalLabel(g)}</b><span class="goal-state">${stateText(state)}</span></span>
         <span class="bar thin"><span class="fill" style="width:${pct.toFixed(1)}%"></span></span>
         <span class="goal-line">${line}</span></button>`;
     }).join('');
     return `<section class="card goals-card">
-      <div class="sec-head"><h2>이번 달 목표</h2><span class="muted small">${list.length ? `${done}/${list.length} 달성` : `${m}월`}</span></div>
-      ${list.length ? `<div class="goal-list">${rows}</div>` : `<p class="muted small" style="margin-bottom:10px">${m}월에 지킬 목표를 정해보세요. 목표마다 달성하면 +${XP.monthGoal} XP</p>`}
+      <div class="sec-head"><h2>이번 달 목표</h2><span class="muted small">${list.length ? `${done}/${list.length}` : `${m}월`}</span></div>
+      ${list.length ? `<div class="goal-list">${rows}</div>` : ''}
       ${list.length < GOAL_MAX ? `<button class="btn ${list.length ? 'ghost' : 'primary'} small add-goal" data-act="add-goal" type="button">${ICON.plus}목표 추가</button>` : ''}
     </section>`;
   }
 
-  function examChipHtml() {
+  function sideHtml() {
     const a = activeExam();
-    if (a) return `<span class="exam-chip on">${esc(a.e.name)} ${examLabel(a.e, a.st)} · 보상 2배</span>`;
-    const n = nextExam();
-    if (n && n.st.dday <= 60) return `<span class="exam-chip">${esc(n.e.name)} D-${n.st.dday}</span>`;
-    return '';
+    const exam = a ? `<div class="exam-box"><span class="ex-d num">${examLabel(a.e, a.st)}</span><span class="ex-name">${esc(a.e.name)}</span><span class="ex-x">보상 2배</span></div>` : '';
+    return `<div class="hero-side">${exam}<div class="lv-widget" id="lv-widget"></div></div>`;
   }
 
   function renderHome() {
@@ -1030,21 +1020,22 @@
     const risk = riskNow(now());
     const jStreak = journalStreak();
     const mq = myQuoteOfDay();
-    const nextCb = U.lastDur ? Math.max(HOUR, Math.round(U.lastDur / 2 / MIN) * MIN) : 0;
     const hero = active ? `
       <section class="hero">
-        <div class="hero-top"><span class="live-dot"></span><span>디톡스 진행 중</span>
-          <span class="record-chip hidden" id="h-record">신기록</span>
-          <span class="mult-chip hidden" id="h-mult"></span>${examChipHtml()}</div>
-        <div class="big"><span class="days"><b id="h-days">0</b><span>일</span></span><span class="clock" id="h-clock">00:00:00</span></div>
-        <div class="hero-meta"><span>최장 기록 <b id="h-best">-</b></span><span>시작 <b>${md(U.startAt)} ${hm(U.startAt)}</b></span>
-          <span id="h-mult-next"></span>${U.urgeWins ? `<span>충동 <b>${U.urgeWins}번</b> 이겨냄</span>` : ''}</div>
+        <div class="hero-main">
+          <div class="hero-left">
+            <div class="hero-top"><span class="live-dot"></span><span>디톡스 진행 중</span><span class="record-chip hidden" id="h-record">신기록</span></div>
+            <div class="big"><span class="days"><b id="h-days">0</b><span>일</span></span><span class="clock" id="h-clock">00:00:00</span></div>
+            <div class="hero-meta"><span>최장 기록 <b id="h-best">-</b></span><span>시작 <b>${md(U.startAt)} ${hm(U.startAt)}</b></span><span>현재 보상 <b class="acc" id="h-mult">×1</b></span></div>
+          </div>
+          ${sideHtml()}
+        </div>
         <div class="badge-progress">
           <div class="bar"><div class="fill" id="h-bar"></div></div>
           <div class="bar-labels"><span id="h-bar-l"></span><span id="h-bar-r"></span></div>
         </div>
         ${cbOn ? `<div class="comeback">
-          <div class="cb-head"><span class="cb-tag">재도전 목표</span><b>${fmtDur(U.comeback.targetMs)} 버티기</b><span class="muted small">지난 기록 ${fmtDur(U.comeback.prevMs)}의 절반</span></div>
+          <div class="cb-head"><span class="cb-tag">재도전</span><b>${fmtDur(U.comeback.targetMs)} 버티기</b></div>
           <div class="bar thin"><div class="fill" id="cb-bar"></div></div>
           <div class="bar-labels"><span id="cb-l"></span><span id="cb-r"></span></div></div>` : ''}
         <div class="hero-actions">
@@ -1053,51 +1044,49 @@
         </div>
       </section>` : `
       <section class="hero paused">
-        <div class="hero-top"><span class="live-dot off"></span><span>디톡스 쉬는 중</span>${examChipHtml()}</div>
-        <div class="big"><span class="clock muted-clock" id="p-clock">00:00:00</span></div>
-        <div class="hero-meta"><span>${md(U.endedAt || now())} ${hm(U.endedAt || now())}에 종료했어요</span>${U.lastDur ? `<span>지난 기록 <b>${fmtDur(U.lastDur)}</b></span>` : ''}</div>
-        <p class="pause-note">쉬는 동안은 디톡스 시간으로 세지 않아요. 준비되면 시작하기를 눌러요.${nextCb ? ` 다시 시작하면 재도전 목표는 <b>${fmtDur(nextCb)}</b>이에요.` : ''}</p>
+        <div class="hero-main">
+          <div class="hero-left">
+            <div class="hero-top"><span class="live-dot off"></span><span>디톡스 쉬는 중</span></div>
+            <div class="big"><span class="clock muted-clock" id="p-clock">00:00:00</span></div>
+            <div class="hero-meta"><span>종료 <b>${md(U.endedAt || now())} ${hm(U.endedAt || now())}</b></span>${U.lastDur ? `<span>지난 기록 <b>${fmtDur(U.lastDur)}</b></span>` : ''}</div>
+          </div>
+          ${sideHtml()}
+        </div>
         <div class="hero-actions single"><button class="btn primary start-btn" data-act="start" type="button">${ICON.play}시작하기</button></div>
       </section>`;
     $('page-home').innerHTML = `${hero}
-      <section class="card quote-card"><p class="quote-kicker">오늘의 문장 · 매일 아침 8시에 바뀌어요</p>
-        <div class="quote">${esc(quoteOfDay())}</div>
-        ${mq ? `<p class="my-quote">내 문구 · ${esc(mq)}</p>` : ''}</section>
+      ${mq ? `<section class="my-quote-card"><span class="mq-tag">✦ 나의 문장</span><p class="mq-text">${esc(mq)}</p></section>` : ''}
+      <section class="card quote-card"><div class="quote">${esc(quoteOfDay())}</div></section>
       ${attendCardHtml()}
-      ${risk ? `<div class="risk-banner"><div class="rb-text"><b>지금은 평소에 자주 무너지는 시간이에요</b>
-        <span>${hourRange(risk.from)} · 지금까지 종료 ${risk.total}번 중 ${risk.n}번이 이때였어요</span></div>
+      ${risk ? `<div class="risk-banner"><div class="rb-text"><b>지금은 자주 무너지는 시간이에요</b>
+        <span>${hourRange(risk.from)}</span></div>
         <button class="btn small primary" data-act="urge" type="button">미리 참기</button></div>` : ''}
       ${yr ? `<button class="report-banner" data-act="open-year" data-y="${yr}" type="button"><span>${yr}년 결산이 나왔어요</span>${ICON.arrow}</button>` : ''}
       ${showMonth ? `<button class="report-banner" data-act="open-month" type="button"><span>지난달 리포트가 나왔어요</span>${ICON.arrow}</button>` : ''}
       ${showReport ? `<button class="report-banner" data-act="open-report" type="button"><span>지난주 리포트가 나왔어요</span>${ICON.arrow}</button>` : ''}
       <div class="grid-2">${pledgeCardHtml()}${goalsCardHtml()}</div>
-      <div class="grid-2">
-        <section class="card" id="level-card"></section>
-        <section class="card">
-          <div class="sec-head"><h2>한 줄 일기 ${jStreak ? `<span class="streak-chip">${jStreak}일 연속</span>` : ''}</h2>${j && !ui.editJournal ? '<button class="link" data-act="edit-journal" type="button">고치기</button>' : `<span class="muted small">${md(now())}</span>`}</div>
-          ${j && !ui.editJournal ? `<div class="journal-view"><span class="m">${esc(j.mood || '📝')}</span><p>${esc(j.text)}</p></div>` : `
-            <div class="moods">${MOODS.map((m) => `<button type="button" class="mood${(ui.mood || (j && j.mood)) === m ? ' selected' : ''}" data-mood="${m}">${m}</button>`).join('')}</div>
-            <div class="inline-add"><input id="journal-input" maxlength="80" placeholder="오늘 남는 시간에 뭘 했나요?" value="${esc(j ? j.text : '')}" />
-            <button class="btn primary" data-act="save-journal" type="button">저장</button></div>
-            ${j ? '' : `<p class="hint">${jStreak ? `오늘 쓰면 ${jStreak + 1}일 연속 · ` : ''}처음 쓰면 +${Math.round(XP.journal * mult())} XP</p>`}`}
-        </section>
-      </div>`;
+      <section class="card">
+        <div class="sec-head"><h2>한 줄 일기 ${jStreak ? `<span class="streak-chip">${jStreak}일 연속</span>` : ''}</h2>${j && !ui.editJournal ? '<button class="link" data-act="edit-journal" type="button">고치기</button>' : `<span class="muted small">${md(now())}</span>`}</div>
+        ${j && !ui.editJournal ? `<div class="journal-view"><span class="m">${esc(j.mood || '📝')}</span><p>${esc(j.text)}</p></div>` : `
+          <div class="moods">${MOODS.map((m) => `<button type="button" class="mood${(ui.mood || (j && j.mood)) === m ? ' selected' : ''}" data-mood="${m}">${m}</button>`).join('')}</div>
+          <div class="inline-add"><input id="journal-input" maxlength="80" placeholder="오늘 남는 시간에 뭘 했나요?" value="${esc(j ? j.text : '')}" />
+          <button class="btn primary" data-act="save-journal" type="button">저장</button></div>`}
+      </section>`;
     renderLevelCard();
     updateHero();
   }
 
+  // 홈 맨 위 오른쪽 레벨
   function renderLevelCard() {
-    const el = $('level-card');
+    const el = $('lv-widget');
     if (!el) return;
     const lv = levelOf(U.xp), cur = xpForLevel(lv), next = xpForLevel(lv + 1);
-    const pct = ((U.xp - cur) / (next - cur)) * 100;
-    const a = U.attend || {};
-    const attOk = a.last === dateKey(now());
-    el.innerHTML = `<div class="sec-head"><h2>레벨</h2><span class="muted small">업적 ${Object.keys(U.achievements || {}).filter((k) => ACHS.some((x) => x.id === k)).length}/${ACHS.length} · 배지 ${Object.keys(U.badges).length}/${MILESTONES.length}</span></div>
-      <div class="level-row"><span class="lv">Lv.${lv}</span><span class="title">${titleOf(lv)}</span></div>
-      <div class="bar thin"><div class="fill" style="width:${pct.toFixed(1)}%"></div></div>
-      <div class="level-sub"><span>${U.xp} XP</span><span>다음 레벨까지 ${next - U.xp} XP</span></div>
-      ${attOk ? `<p class="att-done">출석 ${a.streak}일 연속 · 오늘 출석 완료</p>` : ''}`;
+    const pct = Math.max(0, Math.min(1, (U.xp - cur) / (next - cur)));
+    const C2 = 2 * Math.PI * 30;
+    el.innerHTML = `<div class="lv-ring"><svg viewBox="0 0 72 72" aria-hidden="true"><circle class="lv-track" cx="36" cy="36" r="30"/>
+        <circle class="lv-arc" cx="36" cy="36" r="30" stroke-dasharray="${C2.toFixed(1)}" stroke-dashoffset="${(C2 * (1 - pct)).toFixed(1)}"/></svg>
+        <span class="lv-num"><small>Lv</small>${lv}</span></div>
+      <div class="lv-info"><b>${titleOf(lv)}</b><span>${U.xp} / ${next} XP</span></div>`;
   }
 
   function updateHero() {
@@ -1116,10 +1105,7 @@
     $('h-best').textContent = best || ms > MIN ? fmtDur(Math.max(best, ms)) : '첫 기록 쌓는 중';
     $('h-record').classList.toggle('hidden', !(best > 0 && ms > best));
     const x = mult();
-    $('h-mult').textContent = `보상 ${fmtX(x)}`;
-    $('h-mult').classList.toggle('hidden', x <= 1);
-    const nextTier = [...MULT_TIERS].reverse().find((t) => t.ms > ms);
-    $('h-mult-next').innerHTML = nextTier ? `${nextTier.label}째부터 보상 <b>${fmtX(nextTier.x)}</b>` : '보상 배수 <b>최대</b>';
+    $('h-mult').textContent = fmtX(x);
     const next = MILESTONES.find((y) => y.ms > ms);
     if (next) {
       const i = MILESTONES.indexOf(next);
@@ -1135,7 +1121,7 @@
     if ($('cb-bar') && U.comeback) {
       const c = U.comeback;
       $('cb-bar').style.width = Math.min(100, (ms / c.targetMs) * 100).toFixed(2) + '%';
-      $('cb-l').textContent = `${Math.floor(Math.min(100, (ms / c.targetMs) * 100))}% · 달성하면 +${Math.round(XP.comeback * x)} XP`;
+      $('cb-l').textContent = `${Math.floor(Math.min(100, (ms / c.targetMs) * 100))}%`;
       $('cb-r').textContent = `${fmtDur(c.targetMs - ms)} 남음`;
     }
   }
@@ -1181,9 +1167,8 @@
     openEndGate();
   }
   function openEndGate() {
-    const x = mult();
     openSheet(`<h2>정말 종료할까요?</h2>
-      <p class="muted">충동 때문이라면 ${U.urgeMinutes || 10}분만 참아보는 건 어때요? 이기면 +${Math.round(XP.urgeWin * x)} XP${x > 1 ? `, 지금 보상 ${fmtX(x)}도 지킬 수 있어요` : ''}.</p>
+      <p class="muted">${U.urgeMinutes || 10}분만 참아볼까요?</p>
       <div class="sheet-actions"><button class="btn danger-ghost" data-go-end type="button">이미 무너졌어요</button>
       <button class="btn primary" data-go-urge type="button">참기 해볼게요</button></div>`,
     (el) => {
@@ -1197,7 +1182,7 @@
   function openEnd() {
     if (!isActive()) return;
     endReason = null; endSits = [];
-    $('reset-sub').textContent = `지금까지 ${fmtDur(curMs())} 버텼어요. 종료하면 시작하기를 누를 때까지 쉬는 시간이 돼요. 경험치와 배지는 그대로 남아요.`;
+    $('reset-sub').textContent = `${fmtDur(curMs())} 버텼어요`;
     const box = $('reset-reasons');
     box.innerHTML = [...U.targets, '기타'].map((t) => `<button type="button" class="chip" data-t="${esc(t)}">${esc(t)}</button>`).join('');
     box.querySelectorAll('.chip').forEach((c) => {
@@ -1407,7 +1392,6 @@
     return `<section class="card">
       <div class="sec-head"><h2>업적</h2><span class="muted small">${done}/${ACHS.length} 달성</span></div>
       <div class="bar thin" style="margin-bottom:6px"><div class="fill" style="width:${((done / ACHS.length) * 100).toFixed(1)}%"></div></div>
-      <div class="legend" style="margin:8px 0 4px">${Object.entries(TIERS).map(([k, t]) => `<span><i class="tier-dot tier-${k}"></i>${t.name} +${t.xp} XP</span>`).join('')}</div>
       ${cats.map((c) => `<h3 class="ach-cat">${c}</h3><div class="ach-list">${ACHS.filter((a) => a.cat === c).map((a) => {
         const cur = Math.min(a.need, st[a.key] || 0), ok = !!got[a.id];
         return `<div class="ach${ok ? ' got' : ''}"><span class="ach-medal tier-${a.tier}">${TIERS[a.tier].star}</span>
@@ -1465,12 +1449,12 @@
         </div></div>
       <div class="tiles">
         <div class="tile"><div class="k">종료</div><div class="v">${r.ends}<small>번</small></div>
-          <div class="d ${diff > 0 ? 'up' : diff < 0 ? 'down' : ''}">${diff === 0 ? '전 주와 같아요' : `전 주보다 ${Math.abs(diff)}번 ${diff > 0 ? '많아요' : '적어요'}`}</div></div>
-        <div class="tile"><div class="k">디톡스한 시간</div><div class="v">${fmtDur(r.detox)}</div><div class="d">쉰 시간은 빼고</div></div>
-        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div><div class="d">이번 주 안에서</div></div>
-        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>/ ${r.tries}</small></div><div class="d">시도 대비 성공</div></div>
-        <div class="tile"><div class="k">지킨 날</div><div class="v">${r.okDays}<small>일</small></div><div class="d">종료 없이 디톡스한 날</div></div>
-        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div><div class="d">7일 중</div></div>
+          </div>
+        <div class="tile"><div class="k">디톡스한 시간</div><div class="v">${fmtDur(r.detox)}</div></div>
+        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div></div>
+        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>/ ${r.tries}</small></div></div>
+        <div class="tile"><div class="k">지킨 날</div><div class="v">${r.okDays}<small>일</small></div></div>
+        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div></div>
       </div>
       ${notes.length ? `<ul class="report-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''}
     </section>`;
@@ -1491,7 +1475,7 @@
     const diff = r.ends - p.ends;
     const label = ui.monthOff === 0 ? `${m}월 (진행 중)` : `${base.getFullYear()}년 ${m}월`;
     const notes = [];
-    if (gl.length) notes.push(`${m}월 목표 ${gl.length}개 중 <b>${gl.filter((s) => s.state === 'done').length}개</b> 달성 (${gl.map((s) => `${goalLabel(s.g)} ${stateText(s.state)}`).join(', ')})`);
+    if (gl.length) notes.push(`${m}월 목표 <b>${gl.filter((s) => s.state === 'done').length}/${gl.length}</b> 달성`);
     if (r.days) notes.push(`${r.days}일 중 <b>${r.okDays}일</b>을 종료 없이 지켰어요`);
     if (r.topReason) notes.push(`가장 많이 무너진 이유는 <b>${esc(r.topReason)}</b>`);
     if (r.topSit) notes.push(`무너질 때 가장 많았던 상황은 <b>${esc(r.topSit)}</b>`);
@@ -1504,12 +1488,12 @@
           <button class="icon-btn small" data-act="month-next" type="button" aria-label="다음 달" ${ui.monthOff > 0 ? '' : 'disabled'}>${ICON.right}</button></div></div>
       <div class="tiles">
         <div class="tile"><div class="k">종료</div><div class="v">${r.ends}<small>번</small></div>
-          <div class="d ${diff > 0 ? 'up' : diff < 0 ? 'down' : ''}">${diff === 0 ? '지난달과 같아요' : `지난달보다 ${Math.abs(diff)}번 ${diff > 0 ? '많아요' : '적어요'}`}</div></div>
-        <div class="tile"><div class="k">디톡스한 시간</div><div class="v">${fmtDur(r.detox)}</div><div class="d">쉰 시간은 빼고</div></div>
-        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div><div class="d">이 달 안에서</div></div>
-        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>/ ${r.tries}</small></div><div class="d">시도 대비 성공</div></div>
-        <div class="tile"><div class="k">다짐 지킴</div><div class="v">${r.kept}<small>/ ${r.pledged}</small></div><div class="d">출석 ${r.att}일</div></div>
-        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div><div class="d">${r.days}일 중</div></div>
+          </div>
+        <div class="tile"><div class="k">디톡스한 시간</div><div class="v">${fmtDur(r.detox)}</div></div>
+        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div></div>
+        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>/ ${r.tries}</small></div></div>
+        <div class="tile"><div class="k">다짐 지킴</div><div class="v">${r.kept}<small>/ ${r.pledged}</small></div></div>
+        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div></div>
       </div>
       ${notes.length ? `<ul class="report-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''}
     </section>`;
@@ -1540,14 +1524,14 @@
       <div class="sec-head"><h2>${y}년 결산${ongoing ? ' <span class="muted small">(진행 중)</span>' : ''}</h2>
         <div class="week-nav"><button class="icon-btn small" data-act="year-prev" type="button" aria-label="이전 해" ${canPrev ? '' : 'disabled'}>${ICON.left}</button>
           <button class="icon-btn small" data-act="year-next" type="button" aria-label="다음 해" ${y < new Date().getFullYear() ? '' : 'disabled'}>${ICON.right}</button></div></div>
-      <div class="year-hero"><span class="muted small">올해 디톡스한 시간</span><b class="num">${Math.floor(r.detox / DAY)}<small>일</small> ${Math.floor((r.detox % DAY) / HOUR)}<small>시간</small></b></div>
+      <div class="year-hero"><span class="muted small">디톡스한 시간</span><b class="num">${Math.floor(r.detox / DAY)}<small>일</small> ${Math.floor((r.detox % DAY) / HOUR)}<small>시간</small></b></div>
       <div class="tiles">
-        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div><div class="d">올해 안에서</div></div>
-        <div class="tile"><div class="k">종료 없이 지킨 날</div><div class="v">${r.okDays}<small>일</small></div><div class="d">${r.days}일 중</div></div>
-        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>번</small></div><div class="d">시도 ${r.tries}번</div></div>
-        <div class="tile"><div class="k">다짐 지킴</div><div class="v">${r.kept}<small>개</small></div><div class="d">다짐 ${r.pledged}개 중</div></div>
-        <div class="tile"><div class="k">새로 달성한 업적</div><div class="v">${r.ach}<small>개</small></div><div class="d">월 목표 달성 ${goalsDone}개</div></div>
-        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div><div class="d">출석 ${r.att}일</div></div>
+        <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div></div>
+        <div class="tile"><div class="k">종료 없이 지킨 날</div><div class="v">${r.okDays}<small>일</small></div></div>
+        <div class="tile"><div class="k">참기 성공</div><div class="v">${r.wins}<small>번</small></div></div>
+        <div class="tile"><div class="k">다짐 지킴</div><div class="v">${r.kept}<small>개</small></div></div>
+        <div class="tile"><div class="k">새로 달성한 업적</div><div class="v">${r.ach}<small>개</small></div></div>
+        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div></div>
       </div>
       <ul class="report-notes">
         ${bestMonth ? `<li>가장 잘 버틴 달은 <b>${bestMonth.m}월</b> (종료 ${bestMonth.ends}번)</li>` : ''}
@@ -1667,12 +1651,12 @@
     return `<section class="card">
       <h2 style="margin-bottom:12px">통계</h2>
       <div class="tiles">
-        <div class="tile"><div class="k">총 디톡스 시간</div><div class="v">${fmtDur(detoxIn(U.trackStart, now()))}</div><div class="d">${md(U.trackStart)}부터 · 쉰 시간 빼고</div></div>
-        <div class="tile"><div class="k">최장 기록</div><div class="v">${fmtDur(Math.max(U.bestMs || 0, curMs()))}</div><div class="d">현재 기록 포함</div></div>
-        <div class="tile"><div class="k">평균 기록</div><div class="v">${avg == null ? '-' : fmtDur(avg)}</div><div class="d">종료 ${done.length}번 기준</div></div>
-        <div class="tile"><div class="k">참기 성공</div><div class="v">${wins}<small>번</small></div><div class="d">성공률 ${tries ? Math.round((wins / tries) * 100) : 0}%</div></div>
-        <div class="tile"><div class="k">위험 시간대</div><div class="v">${rw ? hourRange(rw.from) : '-'}</div><div class="d">${rw ? `종료 ${rw.total}번 중 ${rw.n}번` : '종료 3번부터 보여줘요'}</div></div>
-        <div class="tile"><div class="k">일기 연속</div><div class="v">${journalStreak()}<small>일</small></div><div class="d">최고 ${journalBest()}일</div></div>
+        <div class="tile"><div class="k">총 디톡스 시간</div><div class="v">${fmtDur(detoxIn(U.trackStart, now()))}</div></div>
+        <div class="tile"><div class="k">최장 기록</div><div class="v">${fmtDur(Math.max(U.bestMs || 0, curMs()))}</div></div>
+        <div class="tile"><div class="k">평균 기록</div><div class="v">${avg == null ? '-' : fmtDur(avg)}</div></div>
+        <div class="tile"><div class="k">참기 성공</div><div class="v">${wins}<small>번</small></div></div>
+        <div class="tile"><div class="k">위험 시간대</div><div class="v">${rw ? hourRange(rw.from) : '-'}</div></div>
+        <div class="tile"><div class="k">일기 연속</div><div class="v">${journalStreak()}<small>일</small></div></div>
       </div>
       <div class="grid-2" style="margin-top:18px">
         <div><h3 style="margin-bottom:10px">종료 이유</h3>
@@ -1690,7 +1674,7 @@
     const shown = ui.journalAll ? keys : keys.slice(0, 7);
     const st = journalStreak();
     return `<section class="card">
-      <div class="sec-head"><h2>일기 모아보기</h2><span class="muted small">${st ? `지금 ${st}일 연속 · ` : ''}최고 ${journalBest()}일 · 총 ${keys.length}일</span></div>
+      <div class="sec-head"><h2>일기 모아보기</h2><span class="muted small">${keys.length}일</span></div>
       ${keys.length ? `<div class="journal-list">${shown.map((k) => {
         const d = new Date(keyTs(k)), j = S.journal[k];
         return `<div class="jl"><span class="jd">${d.getMonth() + 1}.${d.getDate()} <small>${DOW[d.getDay()]}</small></span><span class="jm">${esc(j.mood || '📝')}</span><span class="jt">${esc(j.text)}</span></div>`;
@@ -1707,7 +1691,6 @@
         return `<div class="badge${got ? ' got' : ''}"><div class="medal">${m.short}</div><div class="bn">${m.label}</div>
           <div class="bd">${got ? mdShort(got) + ' 획득' : `+${m.bonus} XP`}</div></div>`;
       }).join('')}</div>
-      <p class="hint">한 번에 이어서 버틴 시간으로 받아요. 종료해도 받은 배지는 사라지지 않아요.</p>
     </section>`;
   }
 
@@ -1766,8 +1749,7 @@
     $('page-friends').innerHTML = `
       <section class="card">
         <h2>내 친구 코드</h2>
-        <p class="muted small" style="margin:4px 0 12px">친구에게 이 코드를 알려주면 친구 요청을 보낼 수 있어요.</p>
-        <div class="code-row"><span class="friend-code">${esc(U.friendCode || '······')}</span>
+        <div class="code-row" style="margin-top:10px"><span class="friend-code">${esc(U.friendCode || '······')}</span>
           <button class="btn small" data-act="copy-code" type="button">${ICON.copy}복사</button></div>
       </section>
       <section class="card">
@@ -1797,9 +1779,8 @@
             ${valueHtml(p)}
             ${p.isMe ? '' : `<button class="icon-btn small" data-act="remove-friend" data-id="${esc(p.reqId)}" data-n="${esc(p.nickname)}" type="button" aria-label="친구 삭제">${ICON.x}</button>`}
           </div>`).join('')}</div>
-        ${!F.list.length && F.loaded ? '<p class="hint">아직 친구가 없어요. 위에서 친구 코드로 요청을 보내보세요.</p>' : ''}
+        ${!F.list.length && F.loaded ? '<p class="hint">아직 친구가 없어요</p>' : ''}
         ${!F.loaded ? '<p class="hint">불러오는 중…</p>' : ''}
-        <p class="hint">친구에게는 닉네임과 내가 공개한 항목만 보여요. 종료 이유, 메모, 일기, 다짐은 절대 보이지 않아요.</p>
       </section>`;
   }
 
@@ -1831,10 +1812,10 @@
     const list = [...U.exams].sort((a, b) => a.start.localeCompare(b.start));
     return `<ul class="plain-list exam-list">${list.map((e) => {
       const st = examStatus(e);
-      const tag = st.state === 'on' ? `<span class="ex-tag on">${examLabel(e, st)} · 보상 2배</span>`
+      const tag = st.state === 'on' ? `<span class="ex-tag on">${examLabel(e, st)}</span>`
         : st.state === 'before' ? `<span class="ex-tag">D-${st.dday}</span>`
           : `<span class="ex-tag done">${e.evaluated ? (e.clean ? '완주' : '끝남') : '끝남'}</span>`;
-      return `<li><span><b>${esc(e.name)}</b><br><small class="muted">시험 ${mdShort(keyTs(e.start))}–${mdShort(keyTs(e.end))} · 보상 2배 ${mdShort(st.ps)}부터</small></span>${tag}
+      return `<li><span><b>${esc(e.name)}</b><br><small class="muted">${mdShort(keyTs(e.start))}–${mdShort(keyTs(e.end))}</small></span>${tag}
         <button class="icon-btn small" data-act="del-exam" data-id="${esc(e.id)}" type="button" aria-label="삭제">${ICON.x}</button></li>`;
     }).join('')}</ul>`;
   }
@@ -1845,27 +1826,29 @@
       <label class="switch"><input type="checkbox" data-act="share" data-k="${key}" ${U.share[key] ? 'checked' : ''} /><span></span></label></div>`;
     $('page-settings').innerHTML = `
       <section class="card set-sec">
+        <div class="set-row"><h2>사용법</h2><button class="btn small" data-act="guide" type="button">보기</button></div>
+      </section>
+
+      <section class="card set-sec">
         <h2>프로필</h2>
-        <div class="set-row"><div><div class="lbl">아이디</div><div class="desc">ProFill과 같은 계정이에요</div></div><b>${esc(idOf(me.email))}</b></div>
+        <div class="set-row"><div><div class="lbl">아이디</div></div><b>${esc(idOf(me.email))}</b></div>
         <div class="inline-add"><input id="set-nick" maxlength="12" value="${esc(U.nickname)}" placeholder="닉네임" /><button class="btn" data-act="save-nick" type="button">닉네임 저장</button></div>
-        <div><div class="lbl" style="margin-bottom:8px;font-weight:650">성별 <span class="muted small">(친구에게 안 보여요)</span></div>
+        <div><div class="lbl" style="margin-bottom:8px;font-weight:650">성별 </div>
           <div class="seg">${[['male', '남자'], ['female', '여자'], ['none', '선택 안 함']].map(([v, l]) =>
             `<button class="seg-btn${U.gender === v ? ' active' : ''}" data-act="gender" data-v="${v}" type="button">${l}</button>`).join('')}</div></div>
       </section>
 
       <section class="card set-sec">
         <h2>디톡스 대상</h2>
-        <p class="muted small" style="margin-top:-6px">종료할 때 고르는 이유 목록이에요.</p>
         <div class="chips">${U.targets.map((t, i) => `<span class="chip">${esc(t)}<button class="x" data-act="del-target" data-i="${i}" type="button" aria-label="${esc(t)} 삭제">×</button></span>`).join('')}</div>
         <div class="inline-add"><input id="set-target" maxlength="10" placeholder="새 대상" /><button class="btn" data-act="add-target" type="button">추가</button></div>
       </section>
 
       <section class="card set-sec">
         <h2>시험 기간</h2>
-        <p class="muted small" style="margin-top:-6px">시험 시작 2주 전부터 끝나는 날까지가 시험 기간이에요. 이 기간엔 모든 보상이 2배가 되고 위험 시간대 경고가 더 민감해져요. 시험 전날이 D-1, 시험 첫날이 D-day예요.</p>
         ${examListHtml()}
         <input id="exam-name" maxlength="20" placeholder="이름 (예: 2학기 기말고사)" />
-        <div class="time-row"><span class="muted small">시험</span><input type="date" id="exam-start" /><span>부터</span>
+        <div class="time-row"><input type="date" id="exam-start" /><span>부터</span>
           <input type="date" id="exam-end" /><span>까지</span></div>
         <div><button class="btn primary" data-act="add-exam" type="button">${ICON.plus}시험 추가</button></div>
       </section>
@@ -1881,20 +1864,18 @@
 
       <section class="card set-sec">
         <h2>위험 시간대 알림</h2>
-        <div class="set-row"><div><div class="lbl">홈에 경고 띄우기</div><div class="desc">${(() => { const rw = riskiestWindow(); return rw ? `지금까지 가장 위험한 시간대는 ${hourRange(rw.from)}예요.` : '종료 기록이 3번 쌓이면 자주 무너지는 시간을 찾아서 알려줘요.'; })()}</div></div>
+        <div class="set-row"><div><div class="lbl">홈에 경고 띄우기</div></div>
           <label class="switch"><input type="checkbox" data-act="risk-on" ${U.riskOn ? 'checked' : ''} /><span></span></label></div>
       </section>
 
       <section class="card set-sec">
         <h2>동기 문구</h2>
-        <p class="muted small" style="margin-top:-6px">기본 문장 365개가 매일 아침 8시에 바뀌어요. 내가 추가한 문구는 그 아래에 하루씩 번갈아 보여요.</p>
         ${U.quotes.length ? `<ul class="plain-list">${U.quotes.map((q, i) => `<li><span>${esc(q)}</span><button class="icon-btn small" data-act="del-quote" data-i="${i}" type="button" aria-label="삭제">${ICON.x}</button></li>`).join('')}</ul>` : ''}
         <div class="inline-add"><input id="set-quote" maxlength="60" placeholder="나만의 문구 추가" /><button class="btn" data-act="add-quote" type="button">추가</button></div>
       </section>
 
       <section class="card set-sec">
         <h2>친구 공개 범위</h2>
-        <p class="muted small" style="margin-top:-6px">닉네임은 항상 보여요. 종료 이유, 메모, 일기, 다짐, 성별은 절대 공개되지 않아요.</p>
         ${sw('time', '현재 진행 시간')}${sw('best', '최장 기록')}${sw('level', '레벨')}${sw('badges', '배지 수')}${sw('urges', '이번 주 참기 성공 수')}
       </section>
 
@@ -1902,18 +1883,15 @@
         <h2>화면</h2>
         <div class="seg">${[['system', '기기 설정'], ['light', '라이트'], ['dark', '다크']].map(([v, l]) =>
           `<button class="seg-btn${th === v ? ' active' : ''}" data-act="theme" data-v="${v}" type="button">${l}</button>`).join('')}</div>
-        <p class="muted small">아이패드 사파리에서 공유 버튼 → <b>홈 화면에 추가</b>를 누르면 앱처럼 쓸 수 있어요.</p>
       </section>
 
       <section class="card set-sec">
         <h2>ProFill 연결</h2>
-        <p class="muted small" style="margin-top:-6px">같은 계정이라 따로 로그인하지 않아도 돼요.</p>
         <a class="btn primary" href="${PROFILL_URL}">ProFill 열기 ${ICON.arrow}</a>
       </section>
 
       <section class="card set-sec">
         <h2>계정</h2>
-        <p class="muted small" style="margin-top:-6px">${db.mode === 'local' ? '테스트 모드 · 이 기기에만 저장돼요' : '클라우드에 저장 중'}</p>
         <div class="danger-zone"><button class="btn" data-act="logout" type="button">로그아웃</button>
           <button class="btn danger-ghost" data-act="wipe" type="button">기록 전체 초기화</button></div>
       </section>
@@ -1924,6 +1902,22 @@
     try { await saveUser(fields); if (toastMsg) toast(toastMsg); } catch (e) {}
     if (alsoPublic) savePublic(true);
     renderSettings();
+  }
+
+  /* ---------- 사용법 ---------- */
+  const GUIDE = [
+    ['⏱', '디톡스 타이머', '시작하면 시간이 흘러요. 오래 버틸수록 배지와 보상이 커져요.'],
+    ['✋', '참기', '충동이 오면 누르고 10분만 버텨요.'],
+    ['■', '종료', '무너졌다면 3초 꾹 눌러 종료하고, 준비되면 시작하기.'],
+    ['✓', '다짐 · 목표', '오늘의 다짐과 이번 달 목표를 정하고 지켜요.'],
+    ['★', '보상', '출석, 참기, 다짐, 일기로 경험치를 모아요. 시험 기간엔 2배.'],
+    ['☺', '친구', '친구 코드로 추가하고 서로 진행 시간을 비교해요.'],
+  ];
+  function openGuide(first) {
+    openSheet(`<h2>${first ? 'FocusFill 시작하기' : '사용법'}</h2>
+      <ul class="guide">${GUIDE.map(([i, t, d]) => `<li><span class="g-ic">${i}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}</ul>
+      <div class="sheet-actions"><button class="btn primary" data-ok type="button">${first ? '시작할게요' : '확인'}</button></div>`,
+    (el) => { el.querySelector('[data-ok]').onclick = closeSheet; });
   }
 
   /* ---------- 기록 전체 초기화 ---------- */
@@ -1986,7 +1980,6 @@
       case 'journal-all': ui.journalAll = !ui.journalAll; return renderRecords();
 
       case 'claim-attend': el.disabled = true; return claimAttend();
-      case 'pick-pledge': return makePledge(el.dataset.p);
       case 'make-pledge': return makePledge($('pledge-input') && $('pledge-input').value);
       case 'check-pledge': el.disabled = true; return checkPledge(el.dataset.k, el.dataset.id, el.dataset.v);
       case 'del-pledge': return delPledge(el.dataset.k, el.dataset.id);
@@ -2058,6 +2051,7 @@
       case 'del-quote': return settingsUpdate({ quotes: U.quotes.filter((_, i) => i !== +el.dataset.i) });
       case 'theme': applyTheme(el.dataset.v === 'system' ? null : el.dataset.v); return renderSettings();
       case 'wipe': return openWipe();
+      case 'guide': return openGuide(false);
       case 'logout':
         return confirmSheet('로그아웃할까요?', '기록은 계정에 그대로 남아 있어요.', '로그아웃', async () => {
           clearInterval(tickTimer); U = null; await db.signOut();
