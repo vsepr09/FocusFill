@@ -24,7 +24,7 @@
       if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="style.css?v=1.0.1" />
+  <link rel="stylesheet" href="style.css?v=1.1.0" />
 </head>
 <body>
   <div id="test-banner" class="test-banner hidden">테스트 모드 · 이 기기에만 저장돼요</div>
@@ -164,6 +164,8 @@
       <p class="muted" id="reset-sub"></p>
       <p class="label">무엇 때문이었나요?</p>
       <div class="chips" id="reset-reasons"></div>
+      <p class="label">그때 상황은? <span class="muted small" style="font-weight:500">여러 개 골라도 되고, 안 골라도 돼요</span></p>
+      <div class="chips" id="reset-situations"></div>
       <input id="reset-memo" type="text" maxlength="60" placeholder="메모 한 줄 (선택)" />
       <p id="reset-error" class="form-err"></p>
       <div class="sheet-actions">
@@ -180,11 +182,18 @@
 
   <!-- 참기 -->
   <div class="urge-overlay hidden" id="urge">
-    <div class="urge-inner">
+    <div class="urge-inner hidden" id="urge-pick">
+      <h2 class="urge-q">무엇이 당기나요?</h2>
+      <p class="muted">고르면 바로 참기가 시작돼요. 계획을 세워둔 건 그 행동이 먼저 나와요.</p>
+      <div class="chips urge-chips" id="urge-targets"></div>
+      <button class="btn ghost" id="urge-pick-close" type="button">닫기</button>
+    </div>
+    <div class="urge-inner" id="urge-main">
       <p class="muted" id="urge-title">충동은 몇 분이면 지나가요</p>
       <div class="urge-clock" id="urge-clock">10:00</div>
       <div class="bar thin"><div class="fill" id="urge-bar"></div></div>
-      <p class="label">그동안 이거 해볼까요?</p>
+      <p class="label" id="urge-label">그동안 이거 해볼까요?</p>
+      <p class="urge-plan hidden" id="urge-plan"></p>
       <p class="activity" id="urge-activity"></p>
       <div class="urge-actions" id="urge-running">
         <button class="btn ghost" id="urge-shuffle" type="button">다른 거 보기</button>
@@ -197,12 +206,24 @@
     </div>
   </div>
 
+  <div class="celebrate hidden" id="celebrate" role="dialog" aria-modal="true" aria-labelledby="cel-title">
+    <canvas id="confetti" aria-hidden="true"></canvas>
+    <div class="cel-inner">
+      <div class="cel-medal" id="cel-medal"></div>
+      <p class="cel-kicker" id="cel-kicker"></p>
+      <h2 id="cel-title"></h2>
+      <p class="muted" id="cel-sub"></p>
+      <p class="cel-xp" id="cel-xp"></p>
+      <button class="btn primary wide" id="cel-ok" type="button">좋아요</button>
+    </div>
+  </div>
+
   <div class="toast hidden" id="toast" role="status" aria-live="polite">
     <span id="toast-text"></span>
     <button id="toast-btn" class="toast-btn hidden" type="button">되돌리기</button>
   </div>
 
   <script src="firebase-config.js"></script>
-  <script src="app.js?v=1.0.1"></script>
+  <script src="app.js?v=1.1.0"></script>
 </body>
 </html>
