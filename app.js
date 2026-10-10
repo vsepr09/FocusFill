@@ -3,6 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
+  const APP_VERSION = '1.0.1';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -1160,7 +1161,8 @@
         <h2>계정</h2>
         <p class="muted small" style="margin-top:-6px">${db.mode === 'local' ? '테스트 모드 · 이 기기에만 저장돼요' : '클라우드에 저장 중'}</p>
         <div class="danger-zone"><button class="btn" data-act="logout" type="button">로그아웃</button></div>
-      </section>`;
+      </section>
+      <p class="app-ver">FocusFill v${APP_VERSION}</p>`;
   }
 
   async function settingsUpdate(fields, toastMsg, alsoPublic) {
@@ -1331,6 +1333,7 @@
   /* ====================== 시작 ====================== */
   async function boot() {
     applyTheme(currentTheme());
+    document.querySelectorAll('[data-ver]').forEach((el) => { el.textContent = `FocusFill v${APP_VERSION}`; });
     try { db = useFirebase ? await FirebaseBackend() : LocalBackend(); }
     catch (e) { console.warn('Firebase를 불러오지 못해 테스트 모드로 실행해요.', e); db = LocalBackend(); }
     if (db.mode === 'local') show($('test-banner'));

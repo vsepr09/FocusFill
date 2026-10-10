@@ -11,7 +11,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="FocusFill" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="icon" href="icon-192.png" type="image/png" />
+  <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="icon" href="icon-192.png" sizes="192x192" type="image/png" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -23,7 +24,7 @@
       if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=1.0.1" />
 </head>
 <body>
   <div id="test-banner" class="test-banner hidden">테스트 모드 · 이 기기에만 저장돼요</div>
@@ -59,6 +60,7 @@
         <button type="submit" id="auth-submit" class="btn primary wide">로그인</button>
       </form>
       <p class="hint" id="auth-hint">ProFill 아이디와 비밀번호로 바로 로그인할 수 있어요.</p>
+      <p class="app-ver" data-ver></p>
     </div>
   </section>
 
@@ -201,6 +203,6 @@
   </div>
 
   <script src="firebase-config.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=1.0.1"></script>
 </body>
 </html>
