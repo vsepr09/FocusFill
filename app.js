@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.5.12';
+  const APP_VERSION = '1.5.13';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -389,13 +389,25 @@
     };
   }
 
+  // 정해진 시간 안에 끝나지 않으면 실패로 처리 (로딩 화면에서 영원히 멈추지 않도록)
+  function withTimeout(promise, ms, label) {
+    let t;
+    return Promise.race([
+      promise,
+      new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${label} (${Math.round(ms / 1000)}초 초과)`)), ms); }),
+    ]).finally(() => clearTimeout(t));
+  }
   function loadScript(src) {
-    return new Promise((res, rej) => {
+    return withTimeout(new Promise((res, rej) => {
       const el = document.createElement('script');
       el.src = src; el.onload = res; el.onerror = () => rej(new Error('load ' + src));
       document.head.appendChild(el);
-    });
+    }), 20000, '서버 파일 불러오기');
   }
+  // 아이패드·아이폰(모든 브라우저가 Safari 엔진) + 맥 Safari
+  const UA = navigator.userAgent;
+  const IS_IOS = /iPad|iPhone|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+  const IS_WEBKIT = IS_IOS || (/AppleWebKit/.test(UA) && !/Chrome|Chromium|Edg|Android/.test(UA));
 
   async function FirebaseBackend() {
     const base = 'https://www.gstatic.com/firebasejs/10.12.2/';
@@ -403,7 +415,10 @@
     await Promise.all([loadScript(base + 'firebase-auth-compat.js'), loadScript(base + 'firebase-firestore-compat.js')]);
     firebase.initializeApp(cfg);
     const auth = firebase.auth(), fs = firebase.firestore();
-    try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
+    // 학교·공용 와이파이처럼 실시간 연결이 막힌 곳에서도 되도록 자동으로 다른 연결 방식을 써요
+    try { fs.settings({ experimentalAutoDetectLongPolling: true, merge: true }); } catch (e) {}
+    // Safari(아이패드)는 IndexedDB가 가끔 멈춰서 Firestore가 응답하지 않는 문제가 있어 오프라인 저장을 끄고 써요
+    if (!IS_WEBKIT) { try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {} }
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     return {
@@ -412,7 +427,7 @@
       signUp: (e, p) => auth.createUserWithEmailAndPassword(e, p),
       signIn: (e, p) => auth.signInWithEmailAndPassword(e, p),
       signOut: () => auth.signOut(),
-      async get(path) { const d = await fs.doc(path).get(); return d.exists ? d.data() : null; },
+      async get(path) { const d = await withTimeout(fs.doc(path).get(), 15000, '기록 읽기'); return d.exists ? d.data() : null; },
       set: (path, data) => fs.doc(path).set(data, { merge: true }),
       put: (path, data) => fs.doc(path).set(data),
       async add(col, data) { const r = await fs.collection(col).add(data); return r.id; },
@@ -424,8 +439,8 @@
           cb(snap.exists ? snap.data() : null);
         }, () => {});
       },
-      async list(col) { return docs(await fs.collection(col).get()); },
-      async query(col, field, value) { return docs(await fs.collection(col).where(field, '==', value).get()); },
+      async list(col) { return docs(await withTimeout(fs.collection(col).get(), 15000, '기록 목록 읽기')); },
+      async query(col, field, value) { return docs(await withTimeout(fs.collection(col).where(field, '==', value).get(), 15000, '친구 정보 읽기')); },
     };
   }
 
@@ -506,7 +521,9 @@
   }
   function hideToast() { hide($('toast')); clearTimeout(toastTimer); }
 
+  let sheetAt = 0;
   function openSheet(html, bind) {
+    sheetAt = now();
     $('sheet-body').innerHTML = html;
     show($('modal-sheet'));
     if (bind) bind($('sheet-body'));
@@ -787,12 +804,15 @@
   }
 
   /* ====================== 앱 진입 ====================== */
-  async function loadRecords() {
+  async function loadRecords(strict) {
+    const safe = (pr) => (strict ? pr : pr.catch(() => null));
     const [streaks, urges, journal] = await Promise.all([
-      db.list(`${userPath()}/streaks`).catch(() => []),
-      db.list(`${userPath()}/urges`).catch(() => []),
-      db.list(`${userPath()}/journal`).catch(() => []),
+      safe(db.list(`${userPath()}/streaks`)),
+      safe(db.list(`${userPath()}/urges`)),
+      safe(db.list(`${userPath()}/journal`)),
     ]);
+    // 다른 기기 동기화 중 읽기에 실패하면 지금 기록을 그대로 둬요 (빈 기록으로 덮지 않도록)
+    if (!streaks || !urges || !journal) return;
     S.streaks = streaks.sort((a, b) => a.end - b.end);
     S.urges = urges.sort((a, b) => a.at - b.at);
     S.journal = {};
@@ -1560,7 +1580,7 @@
     });
   }
 
-  let endReason = null;
+  let endReason = null, resetAt = 0;
   let endSits = [];
   function openEnd() {
     if (!isActive()) return;
@@ -1586,6 +1606,7 @@
     });
     $('reset-memo').value = '';
     $('reset-error').textContent = '';
+    resetAt = now();
     show($('modal-reset'));
   }
 
@@ -2697,6 +2718,17 @@
     ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => holdEnd(true)));
     document.addEventListener('pointerout', (e) => { if (hold && e.target.closest('[data-hold]') === hold.el && !hold.el.contains(e.relatedTarget)) holdEnd(true); });
     document.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-hold]')) e.preventDefault(); });
+    if (!window.PointerEvent) {
+      const T = (e) => ({ pointerId: 'touch', clientY: (e.touches[0] || e.changedTouches[0]).clientY, preventDefault: () => e.preventDefault() });
+      document.addEventListener('touchstart', (e) => {
+        const g = e.target.closest('.ls-handle'); if (g) lsDragStart(T(e), g);
+        const h = e.target.closest('[data-hold]'); if (h) { e.preventDefault(); holdStart(h); }   // 터치 뒤 따라오는 가짜 마우스 이벤트 막기
+      }, { passive: false });
+      document.addEventListener('touchmove', (e) => { if (lsDrag) lsDragMove(T(e)); }, { passive: false });
+      ['touchend', 'touchcancel'].forEach((ev) => document.addEventListener(ev, (e) => { if (lsDrag) lsDragEnd(T(e)); holdEnd(true); }));
+      document.addEventListener('mousedown', (e) => { const h = e.target.closest('[data-hold]'); if (h && e.button === 0) holdStart(h); });
+      document.addEventListener('mouseup', () => holdEnd(true));
+    }
     document.addEventListener('keydown', (e) => { const h = e.target.closest && e.target.closest('[data-hold]'); if (h && (e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); holdStart(h); } });
     document.addEventListener('keyup', (e) => { if (hold && (e.key === 'Enter' || e.key === ' ')) holdEnd(true); });
     $('theme-btn').onclick = () => {
@@ -2705,8 +2737,9 @@
       if (ui.tab === 'settings') renderSettings();
     };
     $('reset-cancel').onclick = () => hide($('modal-reset'));
-    $('modal-reset').onclick = (e) => { if (e.target.id === 'modal-reset') hide($('modal-reset')); };
-    $('modal-sheet').onclick = (e) => { if (e.target.id === 'modal-sheet') closeSheet(); };
+    $('modal-reset').onclick = (e) => { if (e.target.id === 'modal-reset' && now() - resetAt > 600) hide($('modal-reset')); };
+    // 터치 기기: 창이 손가락 아래에서 열리면 손을 떼는 순간 바깥 클릭으로 닫혀 버리므로 잠깐은 무시해요
+    $('modal-sheet').onclick = (e) => { if (e.target.id === 'modal-sheet' && now() - sheetAt > 600) closeSheet(); };
     $('reset-confirm').onclick = doEnd;
     $('urge-shuffle').onclick = () => {
       U.urge.activity = pickActivity(U.urge.activity);
@@ -2723,7 +2756,9 @@
       tick();
       if (ui.tab === 'friends') loadFriends();
     });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(currentTheme()));
+    const darkMq = matchMedia('(prefers-color-scheme: dark)');
+    const onScheme = () => { applyTheme(currentTheme()); if (U && ui.tab === 'home') renderLevelCard(); };
+    if (darkMq.addEventListener) darkMq.addEventListener('change', onScheme); else if (darkMq.addListener) darkMq.addListener(onScheme);
     const net = () => $('offline-bar').classList.toggle('hidden', navigator.onLine !== false);
     addEventListener('online', net); addEventListener('offline', net); net();
     setInterval(() => { if (U && ui.tab === 'friends' && !document.hidden) loadFriends(true).then(() => ui.tab === 'friends' && renderFriendsKeepInput()); }, 60000);
@@ -2740,6 +2775,10 @@
   const LOAD_MIN = 900;   // 로딩 화면을 너무 짧게 깜빡이지 않도록
   const waitLoad = () => new Promise((r) => setTimeout(r, Math.max(0, LOAD_MIN - (now() - bootT0))));
 
+  // 로딩 화면에서 오류가 나면 무한 로딩 대신 원인과 '다시 시도'를 보여줘요
+  addEventListener('error', (e) => { if (onLoadingScreen()) showLoadError(() => location.reload(), e.message || (e.error && e.error.message)); });
+  addEventListener('unhandledrejection', (e) => { if (onLoadingScreen()) showLoadError(() => location.reload(), (e.reason && (e.reason.code || e.reason.message)) || e.reason); });
+
   async function boot() {
     applyTheme(currentTheme());
     document.querySelectorAll('[data-ver]').forEach((el) => { el.textContent = `FocusFill v${APP_VERSION}`; });
@@ -2753,28 +2792,36 @@
     setupApp();
 
     db.onAuth(onUser);
+    // 로그인 상태 확인이 너무 오래 걸리면 (Safari 저장소 문제 등) 다시 시도할 수 있게
+    setTimeout(() => { if (!authSeen && onLoadingScreen()) showLoadError(() => location.reload(), '로그인 상태를 확인하지 못했어요 (15초 초과)'); }, 15000);
   }
 
   // 계정 문서를 못 읽었을 때는 절대 처음 설정으로 보내지 않아요 (기존 기록을 덮어쓰지 않도록)
-  function showLoadError(retry) {
+  function showLoadError(retry, detail) {
     const box = document.querySelector('.load-inner');
+    if (!box) return;
     let el = $('load-err');
     if (!el) {
       el = document.createElement('div'); el.id = 'load-err'; el.className = 'load-err';
-      el.innerHTML = '<p>기록을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</p><button class="btn primary" type="button">다시 시도</button>';
+      el.innerHTML = '<p>불러오지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.</p><small class="load-why"></small><button class="btn primary" type="button">다시 시도</button>';
       box.appendChild(el);
     }
+    el.querySelector('.load-why').textContent = detail ? String(detail).slice(0, 160) : '';
     show(el);
     el.querySelector('button').onclick = () => { hide(el); retry(); };
   }
+  const onLoadingScreen = () => { const l = $('screen-loading'); return !!l && !l.classList.contains('hidden'); };
+  let lastLoadErr = '';
   async function readUserDoc() {
     for (let i = 0; i < 3; i++) {
-      try { return { data: await db.get(userPath()) }; } catch (e) { await new Promise((r) => setTimeout(r, 700 * (i + 1))); }
+      try { return { data: await db.get(userPath()) }; } catch (e) { lastLoadErr = (e && (e.code || e.message)) || String(e); await new Promise((r) => setTimeout(r, 700 * (i + 1))); }
     }
     return null;
   }
 
+  let authSeen = false;
   async function onUser(user) {
+      authSeen = true;
       stopWatch();
       me = user;
       clearInterval(tickTimer);
@@ -2791,7 +2838,7 @@
       if ($('load-err')) hide($('load-err'));
       const got = await readUserDoc();
       if (me !== user) return;
-      if (!got) { showLoadError(() => onUser(user)); return; }
+      if (!got) { showLoadError(() => onUser(user), lastLoadErr); return; }
       const data = got.data;
       if (!data || !data.onboarded) {
         obKeep = data ? { friendCode: data.friendCode || '', codeOk: !!data.codeOk, share: data.share } : {};
@@ -2799,7 +2846,8 @@
         resetOnboarding(data && data.nickname); go('screen-onboard'); obShow(); return;
       }
       U = normalize(data);
-      await loadRecords();
+      try { await loadRecords(true); }
+      catch (e) { U = null; showLoadError(() => onUser(user), (e && (e.code || e.message)) || e); return; }
       await waitLoad();
       if (me !== user) return;
       await enterApp();
@@ -2825,5 +2873,5 @@
       setInterval(check, 5 * MIN);
     }).catch(() => {});
   }
-  boot();
+  boot().catch((e) => showLoadError(() => location.reload(), (e && e.message) || e));
 })();
