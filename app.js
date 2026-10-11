@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.6.3';
+  const APP_VERSION = '1.6.5';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -426,21 +426,31 @@
     const auth = firebase.auth(), fs = firebase.firestore();
     // 학교·공용 와이파이처럼 실시간 연결이 막힌 곳에서도 되도록 자동으로 다른 연결 방식을 써요
     try { fs.settings({ experimentalAutoDetectLongPolling: true, merge: true }); } catch (e) {}
-    // Safari(아이패드)는 IndexedDB가 가끔 멈춰서 Firestore가 응답하지 않는 문제가 있어 오프라인 저장을 끄고 써요
-    if (!IS_WEBKIT) { try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {} }
+    // ProFill처럼: 기록을 이 기기에도 저장해 두고, 인터넷이 없으면 저장해 둔 기록으로 열려요
+    try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const offline = () => navigator.onLine === false;
+    // 읽기: 인터넷이 없으면 기기에 저장해 둔 것 먼저, 없으면 보통 방식
+    const read = (ref, label) => (offline()
+      ? ref.get({ source: 'cache' }).catch(() => withTimeout(ref.get(), 15000, label))
+      : withTimeout(ref.get(), 15000, label));
+    // 쓰기: 기기에는 바로 저장되고, 서버에는 연결되면 자동으로 올라가요. 인터넷이 없을 때 서버 응답을 기다리며 멈추지 않도록
+    const write = (pr) => {
+      pr.catch((e) => console.warn('저장 실패', e));
+      return offline() ? Promise.resolve() : Promise.race([pr, new Promise((r) => setTimeout(r, 6000))]);
+    };
     return {
       mode: 'firebase',
       onAuth(cb) { auth.onAuthStateChanged((u) => cb(u ? { uid: u.uid, email: u.email } : null)); },
       signUp: (e, p) => auth.createUserWithEmailAndPassword(e, p),
       signIn: (e, p) => auth.signInWithEmailAndPassword(e, p),
       signOut: () => auth.signOut(),
-      async get(path) { const d = await withTimeout(fs.doc(path).get(), 15000, '기록 읽기'); return d.exists ? d.data() : null; },
-      set: (path, data) => fs.doc(path).set(data, { merge: true }),
-      put: (path, data) => fs.doc(path).set(data),
-      async add(col, data) { const r = await fs.collection(col).add(data); return r.id; },
-      del: (path) => fs.doc(path).delete(),
+      async get(path) { const d = await read(fs.doc(path), '기록 읽기'); return d.exists ? d.data() : null; },
+      set: (path, data) => write(fs.doc(path).set(data, { merge: true })),
+      put: (path, data) => write(fs.doc(path).set(data)),
+      async add(col, data) { const ref = fs.collection(col).doc(); await write(ref.set(data)); return ref.id; },
+      del: (path) => write(fs.doc(path).delete()),
       // 다른 기기에서 바뀐 내용 받기 (내가 방금 쓴 건 건너뜀)
       watch(path, cb) {
         return fs.doc(path).onSnapshot((snap) => {
@@ -448,8 +458,8 @@
           cb(snap.exists ? snap.data() : null);
         }, () => {});
       },
-      async list(col) { return docs(await withTimeout(fs.collection(col).get(), 15000, '기록 목록 읽기')); },
-      async query(col, field, value) { return docs(await withTimeout(fs.collection(col).where(field, '==', value).get(), 15000, '친구 정보 읽기')); },
+      async list(col) { return docs(await read(fs.collection(col), '기록 목록 읽기')); },
+      async query(col, field, value) { return docs(await read(fs.collection(col).where(field, '==', value), '친구 정보 읽기')); },
     };
   }
 
@@ -909,12 +919,21 @@
     if (isActive()) checkProgress();
     if (Math.floor(t / 1000) % 30 === 0) checkAchievements();
     const dk = dateKey(t);
-    if (dk !== lastDay) { lastDay = dk; checkCalm(); checkGoals(); if (ui.tab === 'home') renderHome(); }
+    if (dk !== lastDay) { lastDay = dk; checkCalm(); checkGoals(); homeRefresh(); }
     const hr = new Date(t).getHours();
     const po = pledgeOpen(t);
-    if (po !== lastPledgeOpen) { lastPledgeOpen = po; if (ui.tab === 'home' && !(document.activeElement && document.activeElement.matches('input'))) renderHome(); }
-    if (hr !== lastHour) { lastHour = hr; if (ui.tab === 'home' && !(document.activeElement && document.activeElement.matches('input'))) renderHome(); }
+    if (po !== lastPledgeOpen) { lastPledgeOpen = po; homeRefresh(); }
+    if (hr !== lastHour) { lastHour = hr; homeRefresh(); }
   }
+  // 글을 쓰는 중이면 지우지 않고, 입력칸에서 나올 때 홈을 새로 그려요 (자정·정각·다짐 체크 시각)
+  let homeStale = false;
+  const typingNow = () => !!(document.activeElement && document.activeElement.matches('input, textarea'));
+  function homeRefresh() {
+    if (ui.tab !== 'home') return;
+    if (typingNow()) { homeStale = true; return; }
+    homeStale = false; renderHome();
+  }
+  document.addEventListener('focusout', () => { if (homeStale) setTimeout(() => { if (homeStale && U && !typingNow()) homeRefresh(); }, 0); });
 
   /* ====================== 연속 배수 · 시험 기간 ====================== */
   function tierOf(ms) { let t = 0; TIER_MS.forEach((m, i) => { if (ms >= m) t = i; }); return t; }
@@ -1341,6 +1360,7 @@
     await setDaily(k, { pledges: [...list, { id: 'p' + uid6(), text, check: null, xp: 0, at: now() }], pledge: null, pledgeXpCount: cnt + (got ? 1 : 0) }, { xp: U.xp });
     savePublic();
     toast(got ? `다짐했어요 (+${got} XP)` : '다짐했어요');
+    if ($('pledge-input')) $('pledge-input').value = '';
     renderHome();
   }
   async function checkPledge(k, id, v) {
@@ -1391,6 +1411,13 @@
   }
 
   function renderHome() {
+    // 다시 그려도 저장 안 한 입력 내용은 남겨요
+    const keep = {};
+    ['pledge-input', 'journal-input'].forEach((id) => { const el = $(id); if (el && el.value) keep[id] = el.value; });
+    renderHomeInner();
+    Object.keys(keep).forEach((id) => { const el = $(id); if (el && !el.value) el.value = keep[id]; });
+  }
+  function renderHomeInner() {
     const today = dateKey(now());
     const j = S.journal[today];
     const active = isActive();
@@ -1565,6 +1592,7 @@
       await db.set(`${userPath()}/journal/${key}`, entry);
       S.journal[key] = { id: key, ...entry };
       ui.editJournal = false; ui.mood = null;
+      if ($('journal-input')) $('journal-input').value = '';
       const js = journalStreak();
       if (!prev) { const got = await gainFixed(XP.journal); await saveUser({ xp: U.xp }); savePublic(); toast(js > 1 ? `일기 ${js}일 연속! (+${got} XP)` : `일기 저장 (+${got} XP)`); } else toast('일기를 고쳤어요');
       checkGoals(); checkAchievements();
@@ -2692,6 +2720,7 @@
       }
       case 'guide': return openGuide(false);
       case 'logout':
+        if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 로그아웃해 주세요. 아직 서버에 올라가지 않은 기록이 있을 수 있어요.', null, 4000);
         return confirmSheet('로그아웃할까요?', '기록은 계정에 그대로 남아 있어요.', '로그아웃', async () => {
           clearInterval(tickTimer); U = null; await db.signOut();
         }, false);
@@ -2813,7 +2842,13 @@
     const lq = $('load-quote');
     if (lq) lq.textContent = quoteOfDay().text;
     try { db = useFirebase ? await FirebaseBackend() : LocalBackend(); }
-    catch (e) { console.warn('Firebase를 불러오지 못해 테스트 모드로 실행해요.', e); db = LocalBackend(); }
+    catch (e) {
+      // 실제 계정을 쓰는 사이트는 절대 테스트 모드(빈 저장소)로 넘어가지 않아요
+      showLoadError(() => location.reload(), navigator.onLine === false
+        ? '인터넷이 없어요. 인터넷에 연결된 상태로 한 번 열면, 그다음부터는 인터넷 없이도 열려요.'
+        : (e && e.message) || e);
+      return;
+    }
     if (db.mode === 'local') show($('test-banner'));
     setupAuth();
     setupOnboarding();
