@@ -1092,3 +1092,7 @@ textarea:focus { border-color: var(--accent); }
   .hero .lv-widget { padding-top: 10px; padding-bottom: 10px; }
   .hero .lv-widget.lv-f-crown { padding-top: 14px; }
 }
+
+/* v1.6.0 — Lv.100 이후 별 */
+.lv-stars { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: .68rem; font-weight: 800; letter-spacing: .02em;
+  color: #3A2A00; background: linear-gradient(135deg, #FDE68A, #F5B70A); vertical-align: middle; }
