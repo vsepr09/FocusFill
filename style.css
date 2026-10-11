@@ -1000,3 +1000,15 @@ textarea:focus { border-color: var(--accent); }
 .tq-by::before { content: "— "; }
 .today-quote::after { content: "\201C"; top: -14px; right: 16px; }
 .tq-text { padding-right: 26px; }
+
+/* v1.5.9 — 오늘의 문장: 따옴표 없음, 문장은 가운데, 이름은 오른쪽 아래 */
+.today-quote::after { content: none; }
+.today-quote { display: flex; align-items: center; min-height: 104px; padding: 30px 26px 30px 28px; }
+.today-quote .tq-body { position: static; width: 100%; }
+.tq-text { padding-right: 0; }
+.tq-by { position: absolute; right: 18px; bottom: 9px; margin: 0; max-width: calc(100% - 44px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .8rem; }
+.tq-by bdi { unicode-bidi: isolate; }
+@media (max-width: 640px) { .today-quote { padding: 28px 18px 30px 22px; } .tq-by { right: 14px; bottom: 8px; } }
+.tq-by::before { content: none; }
+@media (max-width: 640px) { .today-quote { padding-bottom: 36px; } }
+@media (max-width: 640px) { .today-quote { padding-top: 34px; padding-bottom: 34px; } }
