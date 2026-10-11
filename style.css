@@ -1076,3 +1076,19 @@ textarea:focus { border-color: var(--accent); }
   .lv-f-orbit .lv-orbit { border-color: var(--lv-b); opacity: .6; }
 }
 @media (prefers-color-scheme: dark) { @supports not (color: color-mix(in srgb, red 50%, blue)) { :root:not([data-theme="light"]) .celebrate { background: rgba(15, 14, 13, .94); } } }
+
+/* v1.5.14 — 아이패드: 디톡스 시간 크게, 메타 줄과 진행 바 사이 간격 줄이기 */
+@media (min-width: 641px) {
+  /* 오른쪽 레벨 칸을 뺀 남은 너비에 맞춰 커져요 (작은 아이패드에서도 한 줄로) */
+  .hero .big { --dz: clamp(5.6rem, calc((100vw - 368px) * .29), 8.6rem); --cz: clamp(3rem, calc((100vw - 368px) * .15), 4.5rem); }
+  .hero .big[data-dig="2"] { --dz: clamp(4.6rem, calc((100vw - 368px) * .21), 7rem); --cz: clamp(2.7rem, calc((100vw - 368px) * .125), 4.2rem); }
+  .hero .big[data-dig="3"], .hero .big[data-dig="4"] { --dz: clamp(3.8rem, calc((100vw - 368px) * .15), 5.4rem); --cz: clamp(2.5rem, calc((100vw - 368px) * .11), 3.8rem); }
+  .hero .big .days b { font-size: var(--dz); }
+  .hero .big .clock { font-size: var(--cz); }
+  .hero .badge-progress { margin-top: 14px; }
+  .hero-side { gap: 8px; }
+  .hero .exam-box { padding: 6px 14px 8px; }
+  .hero .ex-d { font-size: 2.6rem; }
+  .hero .lv-widget { padding-top: 10px; padding-bottom: 10px; }
+  .hero .lv-widget.lv-f-crown { padding-top: 14px; }
+}

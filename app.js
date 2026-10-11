@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.5.13';
+  const APP_VERSION = '1.5.14';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -1502,6 +1502,7 @@
     const ms = curMs();
     const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN), s = Math.floor((ms % MIN) / 1000);
     dEl.textContent = d;
+    const bigEl = dEl.closest('.big'); if (bigEl) bigEl.dataset.dig = String(d).length;   // 자릿수가 늘면 글자를 조금 줄여 한 줄 유지
     $('h-clock').textContent = `${pad(h)}:${pad(m)}:${pad(s)}`;
     const best = U.bestMs || 0;
     $('h-best').textContent = best || ms > MIN ? fmtDur(Math.max(best, ms)) : '첫 기록 쌓는 중';
