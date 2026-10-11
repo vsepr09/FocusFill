@@ -897,3 +897,28 @@ textarea:focus { border-color: var(--accent); }
 /* v1.5.2 */
 .mine-quote .mn-text { margin-top: 0; }
 .today-quote { padding: 14px 18px; }
+
+/* v1.5.3 */
+/* 오늘의 문장: 라벨 없이 더 크게 */
+.today-quote { padding: 22px 24px; border-radius: 20px; }
+.tq-text { margin-top: 0; font-size: clamp(1.15rem, 3.2vw, 1.35rem); font-weight: 700; line-height: 1.6; letter-spacing: -0.01em; }
+
+/* 나의 문장: 작게, 주황 테두리가 은은하게 빛나요 */
+.mine-quote {
+  padding: 16px 22px; border-radius: 18px; text-align: center;
+  background: var(--surface); border: 1.5px solid var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: mqGlow 3.2s ease-in-out infinite;
+}
+.mine-quote::before, .mine-quote::after { content: none; }
+.mine-quote .mn-text { font-size: clamp(1rem, 2.6vw, 1.12rem); line-height: 1.5; color: var(--ink); }
+@keyframes mqGlow {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent), 0 0 14px color-mix(in srgb, var(--accent) 22%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent), 0 0 28px color-mix(in srgb, var(--accent) 45%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .mine-quote { animation: none; } }
+
+/* v1.5.4 — 최장 기록 · 시작 · 현재 보상 줄 높이 맞추기 */
+.hero-meta { align-items: baseline; line-height: 1.4; }
+.hero-meta > span { display: inline-flex; align-items: baseline; gap: 4px; }
+.hero-meta b, .hero .hero-meta .acc { font-family: var(--font); font-size: 1em; line-height: inherit; }

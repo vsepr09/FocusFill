@@ -1,7 +1,7 @@
 // FocusFill 서비스 워커
 // 항상 서버에 새 파일이 있는지 먼저 확인하고(바뀐 게 없으면 아주 빠르게 끝나요), 인터넷이 끊기면 저장해 둔 파일을 보여줘요.
 // 버전 이름이 바뀌면 브라우저가 새 서비스 워커를 받아서 바로 적용하고, 앱이 자동으로 새로고침돼요.
-const VERSION = 'focusfill-v1.5.2';
+const VERSION = 'focusfill-v1.5.4';
 const CACHE = VERSION;
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'quotes.js', 'firebase-config.js', 'manifest.webmanifest', 'icon-r192.png', 'icon-r512.png', 'favicon-r32.png', 'apple-touch-icon.png'];
 

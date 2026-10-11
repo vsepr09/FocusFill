@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.5.2';
+  const APP_VERSION = '1.5.4';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -1213,7 +1213,7 @@
     $('page-home').innerHTML = `${hero}
       ${mq ? `<section class="mine-quote"><p class="mn-text">${esc(mq)}</p></section>` : ''}
       <section class="today-quote">
-        <div class="tq-body"><span class="tq-label">오늘의 문장</span><p class="tq-text">${esc(quoteOfDay())}</p></div></section>
+        <div class="tq-body"><p class="tq-text">${esc(quoteOfDay())}</p></div></section>
       ${attendCardHtml()}
       ${risk ? `<div class="risk-banner"><div class="rb-text"><b>지금은 자주 무너지는 시간이에요</b>
         <span>${hourRange(risk.from)}</span></div>
