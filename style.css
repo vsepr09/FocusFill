@@ -849,3 +849,47 @@ textarea {
 }
 textarea:focus { border-color: var(--accent); }
 .rec-tabs .seg-btn { padding: 8px 4px; }
+
+/* ============ v1.5.1 ============ */
+/* 시험 D-day: 글자 크기에 맞게 */
+.hero-side { width: auto; min-width: 250px; align-items: flex-end; }
+.exam-box { width: auto; align-self: flex-end; display: inline-grid; justify-items: end; gap: 2px; padding: 8px 16px 10px; border-radius: 16px; }
+.ex-d { font-size: 2.9rem; line-height: .95; }
+.ex-name { font-size: .82rem; }
+.lv-widget { width: 264px; }
+@media (max-width: 640px) {
+  .hero-side { min-width: 0; width: 100%; flex-direction: row; align-items: stretch; }
+  .exam-box { flex: 0 0 auto; align-self: stretch; justify-items: start; align-content: center; padding: 10px 16px; }
+  .lv-widget { flex: 1; width: auto; }
+  .ex-d { font-size: 2.3rem; }
+}
+
+/* 나의 문장: 가운데 정렬, 명조체, 얇은 장식선 */
+.mine-quote {
+  position: relative; text-align: center; padding: 26px 28px 28px; border-radius: 22px;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.mine-quote::before, .mine-quote::after {
+  content: ""; position: absolute; left: 50%; width: 7px; height: 7px; background: var(--accent);
+  transform: translateX(-50%) rotate(45deg); border-radius: 1px;
+}
+.mine-quote::before { top: -4px; }
+.mine-quote::after { bottom: -4px; }
+.mn-label { display: inline-flex; align-items: center; gap: 10px; font-size: .72rem; font-weight: 800; letter-spacing: .2em; color: var(--accent); }
+.mn-label i { display: block; width: 26px; height: 1px; background: currentColor; opacity: .5; }
+.mn-text { margin-top: 12px; font-family: var(--serif); font-size: clamp(1.25rem, 3.4vw, 1.6rem); font-weight: 700; line-height: 1.55; letter-spacing: -0.01em; color: var(--ink); word-break: keep-all; }
+
+/* 오늘의 문장: 달력 한 장 + 문장 */
+.today-quote {
+  display: flex; align-items: center; gap: 16px; padding: 14px 18px 14px 14px; border-radius: 18px;
+  background: var(--surface-2); border: 1px solid transparent;
+}
+.tq-date {
+  flex-shrink: 0; width: 54px; overflow: hidden; border-radius: 12px; background: var(--surface);
+  display: grid; text-align: center; box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+.tq-date small { display: block; padding: 3px 0 2px; background: var(--ink); color: var(--bg); font-size: .68rem; font-weight: 800; letter-spacing: .04em; }
+.tq-date b { display: block; padding: 2px 0 4px; font-size: 1.7rem; font-weight: 700; line-height: 1.15; color: var(--ink); }
+.tq-body { flex: 1; min-width: 0; }
+.tq-label { display: block; font-size: .7rem; font-weight: 800; letter-spacing: .12em; color: var(--muted); }
+.tq-text { margin-top: 3px; font-size: 1rem; font-weight: 600; line-height: 1.55; color: var(--ink); word-break: keep-all; }
