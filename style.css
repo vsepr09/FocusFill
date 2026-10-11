@@ -1096,3 +1096,6 @@ textarea:focus { border-color: var(--accent); }
 /* v1.6.0 — Lv.100 이후 별 */
 .lv-stars { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: .68rem; font-weight: 800; letter-spacing: .02em;
   color: #3A2A00; background: linear-gradient(135deg, #FDE68A, #F5B70A); vertical-align: middle; }
+
+/* v1.6.3 — 레벨 칸을 조금 아래로 */
+@media (min-width: 641px) { .hero .hero-side .lv-widget { margin-top: 12px; } }
