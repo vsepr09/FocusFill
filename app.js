@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.5.7';
+  const APP_VERSION = '1.5.8';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -98,7 +98,7 @@
     '물 한 잔 마시기', '1분 스트레칭', '문제 하나 풀기', '창밖 보며 심호흡 10번', '책상 정리하기',
     '팔굽혀펴기 10개', '내일 할 일 3개 적기', '친구한테 말 걸기', '세수하고 오기', '좋아하는 노래 한 곡 듣기',
   ];
-  const FALLBACK_QUOTE = '오늘 하루를 내가 고른 것들로 채우자.';
+  const FALLBACK_QUOTE = ['천 리 길도 발밑에서 시작된다.', '노자'];
   const MOODS = ['😀', '🙂', '😐', '😕', '😣'];
   const BUCKETS = [
     { label: '새벽', from: 0, to: 6 }, { label: '오전', from: 6, to: 12 },
@@ -1042,7 +1042,9 @@
     const d = new Date(quoteDayTs());
     let day = d.getDate();
     if (d.getMonth() === 1 && day === 29) day = 28;
-    return Q[(CUM_DAYS[d.getMonth()] + day - 1) % Q.length];
+    const q = Q[(CUM_DAYS[d.getMonth()] + day - 1) % Q.length];
+    // [문장, 말한 사람] (예전 형식인 문자열도 받아요)
+    return Array.isArray(q) ? { text: q[0], by: q[1] || '' } : { text: String(q), by: '' };
   }
   function myQuoteOfDay() {
     if (!U.quotes || !U.quotes.length) return null;
@@ -1184,6 +1186,7 @@
     const risk = riskNow(now());
     const jStreak = journalStreak();
     const mq = myQuoteOfDay();
+    const tq = quoteOfDay();
     const hero = active ? `
       <section class="hero">
         <div class="hero-main">
@@ -1221,7 +1224,7 @@
     $('page-home').innerHTML = `${hero}
       ${mq ? `<section class="mine-quote"><p class="mn-text">${esc(mq)}</p></section>` : ''}
       <section class="today-quote">
-        <div class="tq-body"><p class="tq-text">${esc(quoteOfDay())}</p></div></section>
+        <div class="tq-body"><p class="tq-text">${esc(tq.text)}</p>${tq.by ? `<p class="tq-by">${esc(tq.by)}</p>` : ''}</div></section>
       ${attendCardHtml()}
       ${risk ? `<div class="risk-banner"><div class="rb-text"><b>지금은 자주 무너지는 시간이에요</b>
         <span>${hourRange(risk.from)}</span></div>
@@ -2514,7 +2517,7 @@
     applyTheme(currentTheme());
     document.querySelectorAll('[data-ver]').forEach((el) => { el.textContent = `FocusFill v${APP_VERSION}`; });
     const lq = $('load-quote');
-    if (lq) lq.textContent = quoteOfDay();
+    if (lq) lq.textContent = quoteOfDay().text;
     try { db = useFirebase ? await FirebaseBackend() : LocalBackend(); }
     catch (e) { console.warn('Firebase를 불러오지 못해 테스트 모드로 실행해요.', e); db = LocalBackend(); }
     if (db.mode === 'local') show($('test-banner'));

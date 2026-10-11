@@ -959,3 +959,44 @@ textarea:focus { border-color: var(--accent); }
 }
 .seg-btn { min-width: 0; }
 @media (max-width: 380px) { .seg-btn { padding: 8px 4px; font-size: .82rem; } }
+
+/* v1.5.8 — 라이트 모드에서는 밝은 맨 위 카드 */
+:root {
+  --hero-bg: #FFFFFF; --hero-ink: #1C1917; --hero-muted: #78716C; --hero-line: #E7E1D9;
+  --hero-glow: rgba(232, 89, 12, .10); --hero-soft: #F7F4F0; --hero-track: #ECE6DE;
+  --hero-acc: #E8590C; --hero-danger: #D9363E; --hero-danger-line: #EFCACA; --hero-danger-hover: #E4A9A9;
+  --hero-hold: rgba(217, 54, 62, .14); --hero-shadow: 0 14px 34px rgba(28, 25, 23, .07);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --hero-bg: #1E1B18; --hero-ink: #FAF7F2; --hero-muted: #A8A29E; --hero-line: rgba(255, 255, 255, .08);
+    --hero-glow: rgba(232, 89, 12, .22); --hero-soft: rgba(255, 255, 255, .06); --hero-track: rgba(255, 255, 255, .12);
+    --hero-acc: #FFB27D; --hero-danger: #FCA5A5; --hero-danger-line: rgba(255, 255, 255, .18); --hero-danger-hover: rgba(255, 255, 255, .35);
+    --hero-hold: rgba(239, 68, 68, .28); --hero-shadow: 0 18px 40px rgba(0, 0, 0, .3);
+  }
+}
+:root[data-theme="dark"] {
+  --hero-bg: #1E1B18; --hero-ink: #FAF7F2; --hero-muted: #A8A29E; --hero-line: rgba(255, 255, 255, .08);
+  --hero-glow: rgba(232, 89, 12, .22); --hero-soft: rgba(255, 255, 255, .06); --hero-track: rgba(255, 255, 255, .12);
+  --hero-acc: #FFB27D; --hero-danger: #FCA5A5; --hero-danger-line: rgba(255, 255, 255, .18); --hero-danger-hover: rgba(255, 255, 255, .35);
+  --hero-hold: rgba(239, 68, 68, .28); --hero-shadow: 0 18px 40px rgba(0, 0, 0, .3);
+}
+.hero {
+  background: radial-gradient(120% 90% at 100% 0%, var(--hero-glow), transparent 55%), var(--hero-bg);
+  border-color: var(--hero-line); box-shadow: var(--hero-shadow);
+}
+.hero .hero-meta .acc { color: var(--hero-acc); }
+.hero .bar { background: var(--hero-track); }
+.hero .comeback { background: var(--hero-soft); }
+.hero .cb-tag { background: var(--hero-track); }
+.hero .btn.danger-ghost { border-color: var(--hero-danger-line); color: var(--hero-danger); }
+.hero .btn.danger-ghost:hover { border-color: var(--hero-danger-hover); }
+.hero .hold-fill { background: var(--hero-hold); }
+.lv-widget { background: var(--hero-soft); }
+.lv-track { stroke: var(--hero-track); }
+.lv-bar { background: var(--hero-track); }
+.today-quote::after { bottom: auto; top: -18px; }
+.tq-by { position: relative; margin-top: 8px; text-align: right; font-style: italic; font-size: .86rem; font-weight: 500; color: var(--muted); }
+.tq-by::before { content: "— "; }
+.today-quote::after { content: "\201C"; top: -14px; right: 16px; }
+.tq-text { padding-right: 26px; }
