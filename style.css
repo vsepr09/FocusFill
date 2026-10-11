@@ -925,3 +925,37 @@ textarea:focus { border-color: var(--accent); }
 
 /* v1.5.5 — 오늘의 문장 글씨 크기를 나의 문장과 같게 */
 .tq-text { font-size: clamp(1rem, 2.6vw, 1.12rem); line-height: 1.5; }
+
+/* v1.5.6 — 오늘의 문장: 차분한 카드 */
+.today-quote {
+  position: relative; display: block; overflow: hidden;
+  padding: 20px 22px 20px 26px; border-radius: 18px;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.today-quote::before {
+  content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent); opacity: .45;
+}
+.today-quote::after {
+  content: "\201D"; position: absolute; right: 14px; bottom: -22px;
+  font-family: "Noto Serif KR", Georgia, serif; font-size: 5.5rem; line-height: 1;
+  color: var(--ink); opacity: .05; pointer-events: none;
+}
+.tq-text { position: relative; font-weight: 600; color: var(--ink); line-height: 1.6; }
+
+/* v1.5.7 */
+.load-err { margin-top: 22px; display: grid; gap: 12px; justify-items: center; }
+.load-err p { color: var(--muted); font-size: .92rem; }
+.load-err.hidden { display: none; }
+.sec-head { flex-wrap: wrap; row-gap: 8px; }
+.sec-head > h2 { white-space: nowrap; }
+.week-nav { margin-left: auto; }
+.week-nav .label { white-space: nowrap; }
+.tile .v { white-space: normal; word-break: keep-all; overflow: visible; }
+@media (max-width: 520px) { .tile .v { font-size: 1.35rem; } }
+@media (max-width: 360px) {
+  .week-nav { width: 100%; justify-content: space-between; }
+  .week-nav .label { min-width: 0; font-size: .82rem; white-space: normal; }
+}
+.seg-btn { min-width: 0; }
+@media (max-width: 380px) { .seg-btn { padding: 8px 4px; font-size: .82rem; } }

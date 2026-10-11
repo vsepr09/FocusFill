@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.5.5';
+  const APP_VERSION = '1.5.7';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -142,10 +142,10 @@
   function nextMonthKey(mk) { const [y, m] = mk.split('-').map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`; }
   function hourRange(from) { return `${from}–${(from + 3) % 24 || 24}시`; }
   // 받침에 따라 이/가 고르기
-  function iga(word) {
+  function eul(word) {
     const c = String(word).trim().slice(-1).charCodeAt(0);
-    if (c >= 0xAC00 && c <= 0xD7A3) return word + ((c - 0xAC00) % 28 ? '이' : '가');
-    return word + '가';
+    if (c >= 0xAC00 && c <= 0xD7A3) return word + ((c - 0xAC00) % 28 ? '을' : '를');
+    return word + '을(를)';
   }
   function hm(ts) { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
   function md(ts) { const d = new Date(ts); return `${d.getMonth() + 1}월 ${d.getDate()}일`; }
@@ -437,7 +437,7 @@
       weekOk: sh.ok ? weekOk() : null,
       startAt: sh.time && isActive() ? U.startAt : null,
       paused: sh.time ? !isActive() : null,
-      bestMs: sh.best ? U.bestMs : null,
+      bestMs: sh.best ? Math.max(U.bestMs || 0, curMs()) : null,
       level: sh.level ? levelOf(U.xp) : null,
       badges: sh.badges ? Object.keys(U.badges).length : null,
       weekCalm: sh.calm ? weekCalm() : null,
@@ -448,7 +448,7 @@
   let pubTimer = null;
   function savePublic(immediate) {
     clearTimeout(pubTimer);
-    const run = () => db.set(pubPath(), publicData()).catch(() => {});
+    const run = () => { if (!U || !me) return; return db.set(pubPath(), publicData()).catch(() => {}); };
     if (immediate) return run();
     pubTimer = setTimeout(run, 800);
   }
@@ -819,11 +819,12 @@
     const y = addDays(dayStart(now()), -1), yk = dateKey(y);
     if (dailyOf(yk).calmXp || !calmDone(y) || y < dayStart(U.rewardFrom || 0)) return;
     calmBusy = true;
-    const got = await gain(XP.calm);
-    await setDaily(yk, { calmXp: got }, { xp: U.xp });
-    savePublic();
-    celebrate({ medal: '☾', kind: 'calm', kicker: '고요한 날', title: '어제는 고요한 하루였어요', sub: '종료도 충동도 없었어요.', xp: got });
-    calmBusy = false;
+    try {
+      const got = await gain(XP.calm);
+      await setDaily(yk, { calmXp: got }, { xp: U.xp });
+      savePublic();
+      celebrate({ medal: '☾', kind: 'calm', kicker: '고요한 날', title: '어제는 고요한 하루였어요', sub: '종료도 충동도 없었어요.', xp: got });
+    } finally { calmBusy = false; }
     if (ui.tab === 'home') renderLevelCard();
     checkGoals(); checkAchievements();
   }
@@ -888,8 +889,15 @@
   function goalLabel(g) { const t = GOAL_TYPES[g.type] || GOAL_TYPES.wins_min; return `${t.short} ${g.n}${t.unit}`; }
   const stateText = (s) => (s === 'done' ? '달성' : s === 'fail' ? '실패' : '진행 중');
 
+  let goalsBusy = false, goalsAgain = false;
   async function checkGoals() {
     if (!U) return;
+    if (goalsBusy) { goalsAgain = true; return; }
+    goalsBusy = true;
+    try { await checkGoalsRun(); } finally { goalsBusy = false; }
+    if (goalsAgain) { goalsAgain = false; checkGoals(); }
+  }
+  async function checkGoalsRun() {
     const all = { ...U.monthGoals };
     let changed = false;
     for (const mk of Object.keys(all)) {
@@ -1026,7 +1034,7 @@
     window.scrollTo(0, 0);
   }
 
-  /* ====================== 오늘의 문장 (매일 아침 8시에 바뀜) ====================== */
+  /* ====================== 오늘의 문장 (자정에 바뀜) ====================== */
   const CUM_DAYS = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
   function quoteDayTs() { return now(); }
   function quoteOfDay() {
@@ -1407,7 +1415,7 @@
     if (isActive()) return;
     const t = now();
     const comeback = U.lastDur >= DAY ? { startAt: t, prevMs: U.lastDur, targetMs: Math.round(U.lastDur / 2 / MIN) * MIN } : null;
-    try { await saveUser({ startAt: t, endedAt: null, xpHours: 0, comeback }); } catch (e) { return; }
+    try { await saveUser({ startAt: t, endedAt: null, xpHours: 0, comeback }); } catch (e) { renderHome(); return; }
     savePublic(true);
     renderHome();
     toast(comeback ? `다시 시작! 재도전 목표: ${fmtDur(comeback.targetMs)} 버티기` : '디톡스를 시작했어요');
@@ -1460,6 +1468,8 @@
     U.urge = null;
     hide($('urge'));
     const rec = { at: u.startedAt, minutes: u.minutes, activity: u.activity, target: u.target || '', result };
+    const d0 = dayStart(u.startedAt);
+    const before = S.urges.filter((x) => x.result === 'win' && x.at >= d0 && x.at < addDays(d0, 1)).length;
     try {
       const id = await db.add(`${userPath()}/urges`, rec);
       S.urges.push({ id, ...rec });
@@ -1468,8 +1478,6 @@
     let got = 0;
     if (result === 'win') {
       fields.urgeWins = (U.urgeWins || 0) + 1;
-      const d0 = dayStart(u.startedAt);
-      const before = S.urges.filter((x) => x.result === 'win' && x.at >= d0 && x.at < addDays(d0, 1)).length - 1;
       const base = URGE_XP[before] || 0;
       if (base) { got = await gain(base); fields.xp = U.xp; }
     }
@@ -1504,7 +1512,7 @@
       if (d) { run = prev && nextMonthKey(prev) === mk ? run + 1 : 1; bestRun = Math.max(bestRun, run); prev = mk; } else { run = 0; prev = null; }
     });
     let calmDays = 0, calmRun = 0, cr = 0;
-    for (let d = dayStart(U.trackStart); addDays(d, 1) <= now(); d = addDays(d, 1)) {
+    for (let d = dayStart(Math.max(U.trackStart, U.rewardFrom || 0)); addDays(d, 1) <= now(); d = addDays(d, 1)) {
       if (calmDay(d)) { calmDays++; cr++; calmRun = Math.max(calmRun, cr); } else cr = 0;
     }
     const today = dayStart(now());
@@ -1530,18 +1538,24 @@
       const st = examStatus(e);
       if (st.state !== 'over' || e.evaluated) return e;
       changed = true;
-      const clean = st.ps >= U.trackStart && !endsIn(st.ps, st.pe).length && detoxIn(st.ps, st.pe) >= (st.pe - st.ps) - MIN;
-      if (clean) celebrate({ medal: 'A+', kind: 'alt', kicker: '시험 기간 완주', title: `${e.name}을 종료 없이 버텼어요!`, sub: '가장 힘든 때를 이겨냈어요.' });
+      const clean = st.ps >= Math.max(U.trackStart, U.rewardFrom || 0) && !endsIn(st.ps, st.pe).length && detoxIn(st.ps, st.pe) >= (st.pe - st.ps) - MIN;
+      if (clean) celebrate({ medal: 'A+', kind: 'alt', kicker: '시험 기간 완주', title: `${eul(e.name)} 종료 없이 버텼어요!`, sub: '가장 힘든 때를 이겨냈어요.' });
       return { ...e, evaluated: true, clean };
     });
     if (changed) { try { await saveUser({ exams }); } catch (e) {} }
   }
 
-  let achBusy = false;
+  let achBusy = false, achAgain = false;
   async function checkAchievements() {
-    if (!U || achBusy) return;
+    if (!U) return;
+    if (achBusy) { achAgain = true; return; }
     achBusy = true;
+    try { await checkAchRun(); } catch (e) {} finally { achBusy = false; }
+    if (achAgain && U) { achAgain = false; checkAchievements(); }
+  }
+  async function checkAchRun() {
     await checkExams();
+    if (!U) return;
     const st = achStats();
     const got = { ...(U.achievements || {}) };
     const fresh = ACHS.filter((a) => !got[a.id] && st[a.key] >= a.need);
@@ -1555,7 +1569,6 @@
       if (ui.tab === 'home') renderLevelCard();
       if (ui.tab === 'records' && ui.recTab === 'achieve') renderRecords();
     }
-    achBusy = false;
   }
 
   function achCard() {
@@ -1888,7 +1901,7 @@
       <div class="cal">${cells}</div>
       <div class="legend">
         <span><i style="background:var(--calm)"></i>고요한 날</span>
-        <span><i style="background:var(--calm-soft)"></i>참기로 버틴 날</span>
+        <span><i style="background:var(--calm-soft)"></i>지킨 날</span>
         <span><i class="lg-dot"></i>충동</span>
         <span><i style="background:var(--danger-soft);border:1px solid var(--danger)"></i>종료</span>
         <span><i style="background:var(--surface-2);border:1px dashed var(--muted)"></i>쉰 날</span>
@@ -1909,7 +1922,7 @@
       ...info.ends.map((r) => ({ t: r.end, html: `<span class="tag r">종료</span><span>${esc(r.reason)} · ${fmtDur(r.durationMs)} 버팀${r.situations && r.situations.length ? ` · ${r.situations.map(esc).join(', ')}` : ''}${r.memo ? ` · ${esc(r.memo)}` : ''}</span>` })),
       ...info.urges.map((u) => ({ t: u.at, html: `<span class="tag ${u.result === 'win' ? 'w' : 'l'}">${u.result === 'win' ? '참기 성공' : '참기 실패'}</span><span>${u.target ? `${esc(u.target)} · ` : ''}${esc(u.activity)}</span>` })),
     ].sort((a, b) => a.t - b.t);
-    const status = info.status === 'before' ? '기록 시작 전' : info.status === 'reset' ? `종료 ${info.ends.length}번` : info.status === 'off' ? '쉰 날' : info.status === 'calm' ? '고요한 날' : '참기로 버틴 날';
+    const status = info.status === 'before' ? '기록 시작 전' : info.status === 'reset' ? `종료 ${info.ends.length}번` : info.status === 'off' ? '쉰 날' : info.status === 'calm' ? '고요한 날' : info.urges.length ? '참기로 버틴 날' : '지킨 날';
     return `<div class="day-detail">
       <h3>${dd.getMonth() + 1}월 ${dd.getDate()}일 (${DOW[dd.getDay()]}) · <span class="muted">${status}</span></h3>
       ${evs.length ? evs.map((e) => `<div class="ev"><span class="t">${hm(e.t)}</span>${e.html}</div>`).join('') : '<p class="empty">이날은 종료·참기 기록이 없어요.</p>'}
@@ -2014,7 +2027,7 @@
   }
 
   function renderFriends() {
-    const mine = { uid: me.uid, isMe: true, ...publicData(), weekOk: weekOk(), startAt: isActive() ? U.startAt : null, paused: !isActive(), bestMs: U.bestMs, level: levelOf(U.xp), badges: Object.keys(U.badges).length, weekCalm: weekCalm() };
+    const mine = { uid: me.uid, isMe: true, ...publicData(), weekOk: weekOk(), startAt: isActive() ? U.startAt : null, paused: !isActive(), bestMs: Math.max(U.bestMs || 0, curMs()), level: levelOf(U.xp), badges: Object.keys(U.badges).length, weekCalm: weekCalm() };
     const people = [mine, ...F.list].sort((a, b) => rankValue(b, F.rank) - rankValue(a, F.rank));
     if (F.rank === 'ok' && F.list.length && people[0].isMe && rankValue(people[0], 'ok') > 0 && rankValue(people[1], 'ok') < rankValue(people[0], 'ok') && !U.wasTop1) { saveUser({ wasTop1: true }).then(checkAchievements).catch(() => {}); }
     const valueHtml = (p) => {
@@ -2279,7 +2292,7 @@
     }
     const keep = { nickname: U.nickname, friendCode: U.friendCode || '', codeOk: !!U.codeOk, onboarded: false };
     await db.put(base, keep);
-    await db.set(pubPath(), { nickname: U.nickname, startAt: null, paused: true, bestMs: null, level: null, badges: null, weekWins: null, weekKey: weekKey(), updatedAt: now() }).catch(() => {});
+    await db.set(pubPath(), { nickname: U.nickname, startAt: null, paused: true, bestMs: null, level: null, badges: null, weekOk: null, weekCalm: null, weekKey: weekKey(), updatedAt: now() }).catch(() => {});
     stopWatch();
     clearInterval(tickTimer);
     hide($('urge')); hide($('modal-reset'));
@@ -2362,7 +2375,7 @@
         if (!start || !end) return toast('시험 시작일과 끝나는 날을 정해 주세요');
         if (end < start) return toast('끝나는 날이 시작일보다 빨라요');
         if (end < dateKey(now())) return toast('이미 끝난 시험이에요');
-        return settingsUpdate({ exams: [...U.exams, { id: 'e' + uid6(), name, start, end }] }, `${name}을 추가했어요`);
+        return settingsUpdate({ exams: [...U.exams, { id: 'e' + uid6(), name, start, end }] }, `${eul(name)} 추가했어요`);
       }
       case 'del-exam': return settingsUpdate({ exams: U.exams.filter((e) => e.id !== el.dataset.id) });
       case 'urge-min': return settingsUpdate({ urgeMinutes: +el.dataset.m });
@@ -2509,7 +2522,29 @@
     setupOnboarding();
     setupApp();
 
-    db.onAuth(async (user) => {
+    db.onAuth(onUser);
+  }
+
+  // 계정 문서를 못 읽었을 때는 절대 처음 설정으로 보내지 않아요 (기존 기록을 덮어쓰지 않도록)
+  function showLoadError(retry) {
+    const box = document.querySelector('.load-inner');
+    let el = $('load-err');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'load-err'; el.className = 'load-err';
+      el.innerHTML = '<p>기록을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</p><button class="btn primary" type="button">다시 시도</button>';
+      box.appendChild(el);
+    }
+    show(el);
+    el.querySelector('button').onclick = () => { hide(el); retry(); };
+  }
+  async function readUserDoc() {
+    for (let i = 0; i < 3; i++) {
+      try { return { data: await db.get(userPath()) }; } catch (e) { await new Promise((r) => setTimeout(r, 700 * (i + 1))); }
+    }
+    return null;
+  }
+
+  async function onUser(user) {
       stopWatch();
       me = user;
       clearInterval(tickTimer);
@@ -2523,8 +2558,11 @@
         return;
       }
       go('screen-loading');
-      let data = null;
-      try { data = await db.get(userPath()); } catch (e) { data = null; }
+      if ($('load-err')) hide($('load-err'));
+      const got = await readUserDoc();
+      if (me !== user) return;
+      if (!got) { showLoadError(() => onUser(user)); return; }
+      const data = got.data;
       if (!data || !data.onboarded) {
         obKeep = data ? { friendCode: data.friendCode || '', codeOk: !!data.codeOk, share: data.share } : {};
         await waitLoad();
@@ -2533,8 +2571,8 @@
       U = normalize(data);
       await loadRecords();
       await waitLoad();
+      if (me !== user) return;
       await enterApp();
-    });
   }
 
   // 새 버전이 올라오면 강한 새로고침 없이 바로 바뀌어요
