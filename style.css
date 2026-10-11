@@ -922,3 +922,6 @@ textarea:focus { border-color: var(--accent); }
 .hero-meta { align-items: baseline; line-height: 1.4; }
 .hero-meta > span { display: inline-flex; align-items: baseline; gap: 4px; }
 .hero-meta b, .hero .hero-meta .acc { font-family: var(--font); font-size: 1em; line-height: inherit; }
+
+/* v1.5.5 — 오늘의 문장 글씨 크기를 나의 문장과 같게 */
+.tq-text { font-size: clamp(1rem, 2.6vw, 1.12rem); line-height: 1.5; }
