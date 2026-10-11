@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.6.0';
+  const APP_VERSION = '1.6.2';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -54,10 +54,6 @@
     { id: 'd250', ms: 250 * DAY, label: '250일', short: '250D', bonus: 550 },
     { id: 'd300', ms: 300 * DAY, label: '300일', short: '300D', bonus: 650 },
     { id: 'd365', ms: 365 * DAY, label: '1년', short: '1Y', bonus: 750 },
-    { id: 'd500', ms: 500 * DAY, label: '500일', short: '500D', bonus: 1000 },
-    { id: 'd730', ms: 730 * DAY, label: '2년', short: '2Y', bonus: 1500 },
-    { id: 'd1000', ms: 1000 * DAY, label: '1000일', short: '1000D', bonus: 2000 },
-    { id: 'd1095', ms: 1095 * DAY, label: '3년', short: '3Y', bonus: 2500 },
   ];
   // v1.6.0 밸런스: 버틴 시간이 가장 큰 보상. 배수(연속·시험)는 디톡스 보상(버틴 시간·배지·고요한 날·참기·재도전)에만 붙어요
   const XP = { hour: 2, urgeWin: 10, journal: 5, comeback: 15, monthGoal: 50, pledge: 2, check: 5, honest: 5, calm: 20 };
@@ -111,8 +107,6 @@
     { id: 'tot14', cat: '하루하루', tier: 'c', key: 'detoxDays', need: 14, name: '2주 분량', desc: '디톡스 시간 총 14일' },
     { id: 'bc5', cat: '하루하루', tier: 'c', key: 'badgeCount', need: 5, name: '배지 다섯', desc: '배지 5개 모으기' },
     { id: 'bc10', cat: '하루하루', tier: 'c', key: 'badgeCount', need: 10, name: '배지 열', desc: '배지 10개 모으기' },
-    { id: 'lv4', cat: '하루하루', tier: 'c', key: 'level', need: 4, name: '레벨 4', desc: '레벨 4 달성' },
-    { id: 'lv7', cat: '하루하루', tier: 'c', key: 'level', need: 7, name: '레벨 7', desc: '레벨 7 달성' },
     { id: 'ls3', cat: '하루하루', tier: 'c', key: 'lessons', need: 3, name: '교훈 셋', desc: '교훈 3개 적기' },
     { id: 'ach5', cat: '하루하루', tier: 'c', key: 'achCount', need: 5, name: '업적 다섯', desc: '업적 5개 달성' },
     { id: 'e_goalset3', cat: '하루하루', tier: 'c', key: 'goalsSet', need: 3, name: '계획하는 사람', desc: '이번 달 목표 3개 정하기' },
@@ -137,22 +131,22 @@
     { id: 'calm60', cat: '고요', tier: 'l', key: 'calmDays', need: 60, name: '깊은 고요', desc: '고요한 날 총 60일' },
     { id: 'calm100', cat: '고요', tier: 'm', key: 'calmDays', need: 100, name: '고요의 경지', desc: '고요한 날 총 100일' },
     { id: 'calm200', cat: '고요', tier: 'm', key: 'calmDays', need: 200, name: '잔잔한 바다', desc: '고요한 날 총 200일' },
-    { id: 'calm365', cat: '고요', tier: 'm', key: 'calmDays', need: 365, name: '고요한 1년', desc: '고요한 날 총 365일' },
+    { id: 'calm365', cat: '고요', tier: 'm', key: 'calmDays', need: 300, name: '고요한 300일', desc: '고요한 날 총 300일' },
     { id: 'halve', cat: '고요', tier: 'r', key: 'halved', need: 1, name: '충동 반으로', desc: '최근 7일 충동이 4주 전의 절반 이하' },
     { id: 'tot1', cat: '누적', tier: 'c', key: 'detoxDays', need: 1, name: '첫 하루', desc: '디톡스 시간 총 1일' },
     { id: 'tot7', cat: '누적', tier: 'c', key: 'detoxDays', need: 7, name: '첫 일주일', desc: '디톡스 시간 총 7일' },
     { id: 'tot30', cat: '누적', tier: 'r', key: 'detoxDays', need: 30, name: '한 달 분량', desc: '디톡스 시간 총 30일' },
     { id: 'tot100', cat: '누적', tier: 'l', key: 'detoxDays', need: 100, name: '백 일 분량', desc: '디톡스 시간 총 100일' },
-    { id: 'tot365', cat: '누적', tier: 'm', key: 'detoxDays', need: 365, name: '1년 분량', desc: '디톡스 시간 총 365일' },
-    { id: 'tot1000', cat: '누적', tier: 'm', key: 'detoxDays', need: 1000, name: '천 일 분량', desc: '디톡스 시간 총 1000일' },
+    { id: 'tot365', cat: '누적', tier: 'm', key: 'detoxDays', need: 300, name: '300일 분량', desc: '디톡스 시간 총 300일' },
+    { id: 'tot1000', cat: '누적', tier: 'm', key: 'detoxDays', need: 200, name: '200일 분량', desc: '디톡스 시간 총 200일' },
     { id: 'ok7', cat: '누적', tier: 'c', key: 'okDays', need: 7, name: '지킨 날 7일', desc: '종료 없이 지킨 날 총 7일' },
     { id: 'ok30', cat: '누적', tier: 'r', key: 'okDays', need: 30, name: '지킨 날 30일', desc: '종료 없이 지킨 날 총 30일' },
     { id: 'ok100', cat: '누적', tier: 'l', key: 'okDays', need: 100, name: '지킨 날 100일', desc: '종료 없이 지킨 날 총 100일' },
-    { id: 'ok365', cat: '누적', tier: 'm', key: 'okDays', need: 365, name: '지킨 날 365일', desc: '종료 없이 지킨 날 총 365일' },
+    { id: 'ok365', cat: '누적', tier: 'm', key: 'okDays', need: 300, name: '지킨 날 300일', desc: '종료 없이 지킨 날 총 300일' },
     { id: 'pw1', cat: '누적', tier: 'r', key: 'perfectWeeks', need: 1, name: '완벽한 한 주', desc: '월~일 한 주를 종료 없이 지키기' },
     { id: 'pw4', cat: '누적', tier: 'l', key: 'perfectWeeks', need: 4, name: '완벽한 네 주', desc: '완벽한 한 주 4번' },
     { id: 'pw12', cat: '누적', tier: 'l', key: 'perfectWeeks', need: 12, name: '완벽한 한 분기', desc: '완벽한 한 주 12번' },
-    { id: 'pw52', cat: '누적', tier: 'm', key: 'perfectWeeks', need: 52, name: '완벽한 1년', desc: '완벽한 한 주 52번' },
+    { id: 'pw52', cat: '누적', tier: 'm', key: 'perfectWeeks', need: 40, name: '완벽한 40주', desc: '완벽한 한 주 40번' },
     { id: 'bc3', cat: '배지', tier: 'c', key: 'badgeCount', need: 3, name: '배지 수집 시작', desc: '배지 3개 모으기' },
     { id: 'bc8', cat: '배지', tier: 'r', key: 'badgeCount', need: 8, name: '배지 수집가', desc: '배지 8개 모으기' },
     { id: 'bc13', cat: '배지', tier: 'r', key: 'badgeCount', need: 13, name: '배지 진열장', desc: '배지 13개 모으기' },
@@ -168,7 +162,7 @@
     { id: 'j60', cat: '기록', tier: 'l', key: 'jBest', need: 60, name: '두 달 일기', desc: '일기 60일 연속' },
     { id: 'j100', cat: '기록', tier: 'l', key: 'journals', need: 100, name: '기록하는 사람', desc: '일기 100개' },
     { id: 'j100run', cat: '기록', tier: 'l', key: 'jBest', need: 100, name: '백 일 일기', desc: '일기 100일 연속' },
-    { id: 'j365', cat: '기록', tier: 'm', key: 'journals', need: 365, name: '1년의 기록', desc: '일기 365개' },
+    { id: 'j365', cat: '기록', tier: 'm', key: 'journals', need: 300, name: '300일의 기록', desc: '일기 300개' },
     { id: 'sit10', cat: '기록', tier: 'c', key: 'sitResets', need: 10, name: '나를 아는 중', desc: '상황까지 고른 종료 기록 10번' },
     { id: 'ls1', cat: '기록', tier: 'c', key: 'lessons', need: 1, name: '첫 교훈', desc: '교훈 1개 적기' },
     { id: 'ls10', cat: '기록', tier: 'r', key: 'lessons', need: 10, name: '교훈 노트', desc: '교훈 10개 적기' },
@@ -178,7 +172,7 @@
     { id: 'cb5', cat: '회복', tier: 'r', key: 'comebacks', need: 5, name: '오뚝이', desc: '재도전 목표 5번 달성' },
     { id: 'cb10', cat: '회복', tier: 'r', key: 'comebacks', need: 10, name: '꺾이지 않는 마음', desc: '재도전 목표 10번 달성' },
     { id: 'cb15', cat: '회복', tier: 'l', key: 'comebacks', need: 15, name: '절대 포기 안 함', desc: '재도전 목표 15번 달성' },
-    { id: 'cb30', cat: '회복', tier: 'm', key: 'comebacks', need: 30, name: '불사조', desc: '재도전 목표 30번 달성' },
+    { id: 'cb30', cat: '회복', tier: 'm', key: 'comebacks', need: 20, name: '불사조', desc: '재도전 목표 20번 달성' },
     { id: 'rec1', cat: '회복', tier: 'c', key: 'recordBreaks', need: 1, name: '첫 신기록', desc: '최장 기록 처음 갈아치우기' },
     { id: 'rec3', cat: '회복', tier: 'r', key: 'recordBreaks', need: 3, name: '기록 경신', desc: '최장 기록을 3번 갈아치우기' },
     { id: 'rec5', cat: '회복', tier: 'l', key: 'recordBreaks', need: 5, name: '기록 제조기', desc: '최장 기록을 5번 갈아치우기' },
@@ -188,13 +182,13 @@
     { id: 'goal5', cat: '목표', tier: 'r', key: 'goalsDone', need: 5, name: '목표 사냥꾼', desc: '월 목표 5개 달성' },
     { id: 'goal10', cat: '목표', tier: 'l', key: 'goalsDone', need: 10, name: '목표 장인', desc: '월 목표 10개 달성' },
     { id: 'goal20', cat: '목표', tier: 'l', key: 'goalsDone', need: 20, name: '목표의 달인', desc: '월 목표 20개 달성' },
-    { id: 'goal50', cat: '목표', tier: 'm', key: 'goalsDone', need: 50, name: '목표의 전설', desc: '월 목표 50개 달성' },
+    { id: 'goal50', cat: '목표', tier: 'm', key: 'goalsDone', need: 40, name: '목표의 전설', desc: '월 목표 40개 달성' },
     { id: 'goalAll', cat: '목표', tier: 'r', key: 'goalAllMonths', need: 1, name: '올클리어', desc: '한 달 목표 3개 이상을 모두 달성' },
     { id: 'goalAll3', cat: '목표', tier: 'l', key: 'goalAllMonths', need: 3, name: '세 번의 올클리어', desc: '올클리어 3번' },
-    { id: 'goalAll12', cat: '목표', tier: 'm', key: 'goalAllMonths', need: 12, name: '올클리어의 해', desc: '올클리어 12번' },
+    { id: 'goalAll12', cat: '목표', tier: 'm', key: 'goalAllMonths', need: 10, name: '올클리어 10번', desc: '올클리어 10번' },
     { id: 'goalrun3', cat: '목표', tier: 'l', key: 'goalRun', need: 3, name: '세 달 연속', desc: '3달 연속으로 월 목표 달성' },
     { id: 'goalrun6', cat: '목표', tier: 'l', key: 'goalRun', need: 6, name: '반년 연속', desc: '6달 연속으로 월 목표 달성' },
-    { id: 'goalrun12', cat: '목표', tier: 'm', key: 'goalRun', need: 12, name: '1년 연속', desc: '12달 연속으로 월 목표 달성' },
+    { id: 'goalrun12', cat: '목표', tier: 'm', key: 'goalRun', need: 10, name: '열 달 연속', desc: '10달 연속으로 월 목표 달성' },
     { id: 'keep3', cat: '다짐', tier: 'c', key: 'kept', need: 3, name: '첫 약속들', desc: '다짐 3번 지키기' },
     { id: 'keep7', cat: '다짐', tier: 'c', key: 'kept', need: 7, name: '약속 지키기', desc: '다짐 7번 지키기' },
     { id: 'keep30', cat: '다짐', tier: 'r', key: 'kept', need: 30, name: '말한 대로', desc: '다짐 30번 지키기' },
@@ -215,25 +209,35 @@
     { id: 'att14', cat: '꾸준함', tier: 'r', key: 'attBest', need: 14, name: '2주 개근', desc: '출석 14일 연속' },
     { id: 'att30', cat: '꾸준함', tier: 'r', key: 'attBest', need: 30, name: '한 달 개근', desc: '출석 30일 연속' },
     { id: 'att100run', cat: '꾸준함', tier: 'l', key: 'attBest', need: 100, name: '백 일 개근', desc: '출석 100일 연속' },
-    { id: 'att365run', cat: '꾸준함', tier: 'm', key: 'attBest', need: 365, name: '1년 개근', desc: '출석 365일 연속' },
+    { id: 'att365run', cat: '꾸준함', tier: 'm', key: 'attBest', need: 300, name: '300일 개근', desc: '출석 300일 연속' },
     { id: 'att30t', cat: '꾸준함', tier: 'c', key: 'attTotal', need: 30, name: '출석 30일', desc: '출석 총 30일' },
     { id: 'att100', cat: '꾸준함', tier: 'l', key: 'attTotal', need: 100, name: '백 일', desc: '출석 총 100일' },
     { id: 'att200', cat: '꾸준함', tier: 'l', key: 'attTotal', need: 200, name: '이백 일', desc: '출석 총 200일' },
-    { id: 'att365', cat: '꾸준함', tier: 'm', key: 'attTotal', need: 365, name: '출석 365일', desc: '출석 총 365일' },
+    { id: 'att365', cat: '꾸준함', tier: 'm', key: 'attTotal', need: 300, name: '출석 300일', desc: '출석 총 300일' },
     { id: 'lv3', cat: '레벨', tier: 'c', key: 'level', need: 3, name: '레벨 3', desc: '레벨 3 달성' },
+    { id: 'lv4', cat: '레벨', tier: 'c', key: 'level', need: 4, name: '레벨 4', desc: '레벨 4 달성' },
     { id: 'lv5', cat: '레벨', tier: 'c', key: 'level', need: 5, name: '레벨 5', desc: '레벨 5 달성' },
-    { id: 'lv10', cat: '레벨', tier: 'r', key: 'level', need: 10, name: '레벨 10', desc: '레벨 10 달성' },
-    { id: 'lv15', cat: '레벨', tier: 'r', key: 'level', need: 15, name: '레벨 15', desc: '레벨 15 달성' },
-    { id: 'lv20', cat: '레벨', tier: 'l', key: 'level', need: 20, name: '레벨 20', desc: '레벨 20 달성' },
-    { id: 'lv25', cat: '레벨', tier: 'l', key: 'level', need: 25, name: '레벨 25', desc: '레벨 25 달성' },
-    { id: 'lv30', cat: '레벨', tier: 'l', key: 'level', need: 30, name: '레벨 30', desc: '레벨 30 달성' },
-    { id: 'lv40', cat: '레벨', tier: 'm', key: 'level', need: 40, name: '레벨 40', desc: '레벨 40 달성' },
-    { id: 'lv50', cat: '레벨', tier: 'm', key: 'level', need: 50, name: '레벨 50', desc: '레벨 50 달성' },
-    { id: 'lv75', cat: '레벨', tier: 'm', key: 'level', need: 75, name: '레벨 75', desc: '레벨 75 달성' },
+    { id: 'lv7', cat: '레벨', tier: 'c', key: 'level', need: 7, name: '레벨 7', desc: '레벨 7 달성' },
+    { id: 'lv10', cat: '레벨', tier: 'c', key: 'level', need: 10, name: '레벨 10', desc: '레벨 10 달성' },
+    { id: 'lv15', cat: '레벨', tier: 'c', key: 'level', need: 15, name: '레벨 15', desc: '레벨 15 달성' },
+    { id: 'lv20', cat: '레벨', tier: 'c', key: 'level', need: 20, name: '레벨 20', desc: '레벨 20 달성' },
+    { id: 'lv25', cat: '레벨', tier: 'r', key: 'level', need: 25, name: '레벨 25', desc: '레벨 25 달성' },
+    { id: 'lv30', cat: '레벨', tier: 'r', key: 'level', need: 30, name: '레벨 30', desc: '레벨 30 달성' },
+    { id: 'lv40', cat: '레벨', tier: 'r', key: 'level', need: 40, name: '레벨 40', desc: '레벨 40 달성' },
+    { id: 'lv50', cat: '레벨', tier: 'l', key: 'level', need: 50, name: '레벨 50', desc: '레벨 50 달성' },
+    { id: 'lv60', cat: '레벨', tier: 'l', key: 'level', need: 60, name: '레벨 60', desc: '레벨 60 달성' },
+    { id: 'lv70', cat: '레벨', tier: 'l', key: 'level', need: 70, name: '레벨 70', desc: '레벨 70 달성' },
+    { id: 'lv75', cat: '레벨', tier: 'l', key: 'level', need: 75, name: '레벨 75', desc: '레벨 75 달성' },
+    { id: 'lv80', cat: '레벨', tier: 'l', key: 'level', need: 80, name: '레벨 80', desc: '레벨 80 달성' },
+    { id: 'lv90', cat: '레벨', tier: 'l', key: 'level', need: 90, name: '레벨 90', desc: '레벨 90 달성' },
     { id: 'lv100', cat: '레벨', tier: 'm', key: 'level', need: 100, name: '만렙', desc: '레벨 100 달성' },
+    { id: 'star1', cat: '레벨', tier: 'l', key: 'stars', need: 1, name: '첫 번째 별', desc: '만렙 이후 ★ 1개 모으기' },
+    { id: 'star3', cat: '레벨', tier: 'm', key: 'stars', need: 3, name: '별 세 개', desc: '만렙 이후 ★ 3개 모으기' },
+    { id: 'star5', cat: '레벨', tier: 'm', key: 'stars', need: 4, name: '별자리', desc: '만렙 이후 ★ 4개 모으기' },
+    { id: 'star10', cat: '레벨', tier: 'm', key: 'stars', need: 5, name: '은하수', desc: '만렙 이후 ★ 5개 모으기' },
     { id: 'exam1', cat: '시험', tier: 'l', key: 'examClean', need: 1, name: '시험 기간 완주', desc: '시험 기간을 종료 없이 버티기' },
-    { id: 'exam3', cat: '시험', tier: 'l', key: 'examClean', need: 3, name: '시험의 달인', desc: '시험 기간 3번을 종료 없이 버티기' },
-    { id: 'exam6', cat: '시험', tier: 'm', key: 'examClean', need: 6, name: '시험 정복자', desc: '시험 기간 6번을 종료 없이 버티기' },
+    { id: 'exam3', cat: '시험', tier: 'l', key: 'examClean', need: 2, name: '시험의 달인', desc: '시험 기간 2번을 종료 없이 버티기' },
+    { id: 'exam6', cat: '시험', tier: 'm', key: 'examClean', need: 3, name: '시험 정복자', desc: '시험 기간 3번을 종료 없이 버티기' },
     { id: 'ach10', cat: '업적', tier: 'r', key: 'achCount', need: 10, name: '업적 열 개', desc: '업적 10개 달성' },
     { id: 'ach30', cat: '업적', tier: 'l', key: 'achCount', need: 30, name: '업적 사냥꾼', desc: '업적 30개 달성' },
     { id: 'ach60', cat: '업적', tier: 'l', key: 'achCount', need: 60, name: '업적 수집가', desc: '업적 60개 달성' },
@@ -514,8 +518,14 @@
   const SCREENS = ['screen-loading', 'screen-auth', 'screen-onboard', 'screen-app'];
   function go(id) { SCREENS.forEach((s) => (s === id ? show($(s)) : hide($(s)))); }
 
-  let toastTimer = null;
+  let toastTimer = null, toastBusyUntil = 0;
+  // 버튼이 있는 알림(되돌리기 등)이 떠 있는 동안에는 다른 알림이 덮지 않도록 기다려요
+  function softToast(text) {
+    const wait = toastBusyUntil - now();
+    if (wait > 0) setTimeout(() => softToast(text), wait + 50); else toast(text);
+  }
   function toast(text, action, ms = 2600, label = '되돌리기') {
+    toastBusyUntil = action ? now() + ms : 0;
     $('toast-text').textContent = text;
     const btn = $('toast-btn');
     btn.textContent = label;
@@ -524,7 +534,7 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(hideToast, ms);
   }
-  function hideToast() { hide($('toast')); clearTimeout(toastTimer); }
+  function hideToast() { hide($('toast')); clearTimeout(toastTimer); toastBusyUntil = 0; }
 
   let sheetAt = 0;
   function openSheet(html, bind) {
@@ -645,7 +655,7 @@
     const before = levelOf(U.xp);
     U.xp = (U.xp || 0) + n;
     const after = levelOf(U.xp);
-    if (after > before) setTimeout(() => toast(`레벨 업! Lv.${after} ${titleOf(after)}`), 400);
+    if (after > before) setTimeout(() => softToast(`레벨 업! Lv.${after} ${titleOf(after)}`), 400);
     return after > before;
   }
 
@@ -1376,7 +1386,7 @@
 
   function sideHtml() {
     const a = activeExam();
-    const exam = a ? `<div class="exam-box"><span class="ex-d num">${examLabel(a.e, a.st)}</span><span class="ex-name">${esc(a.e.name)}</span></div>` : '';
+    const exam = a ? `<div class="exam-box" title="${esc(a.e.name)}"><span class="ex-d num">${examLabel(a.e, a.st)}</span></div>` : '';
     return `<div class="hero-side">${exam}<div class="lv-widget" id="lv-widget"></div></div>`;
   }
 
@@ -1500,7 +1510,7 @@
         ${st >= 26 ? '<circle class="lv-track2" cx="48" cy="48" r="46"/>' : ''}
         <circle class="lv-arc" cx="48" cy="48" r="40" stroke-dasharray="${C2.toFixed(1)}" stroke-dashoffset="${(C2 * (1 - pct)).toFixed(1)}"/></svg>
         <span class="lv-num"><small>LEVEL</small>${lv}</span></div>
-      <div class="lv-info"><span class="lv-kicker">칭호 ${pips}${stars ? `<span class="lv-stars">★ ${stars}</span>` : ''}</span><b>${titleOf(lv)}</b>
+      <div class="lv-info">${pips || stars ? `<span class="lv-kicker">${pips}${stars ? `<span class="lv-stars">★ ${stars}</span>` : ''}</span>` : ''}<b>${titleOf(lv)}</b>
         <span class="lv-bar"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
         <span class="lv-xp num">${isMax ? `${fmtXp(starIn)} <small>/ ${fmtXp(STAR_XP)} XP</small>` : `${fmtXp(U.xp)} <small>/ ${fmtXp(next)} XP</small>`}</span></div>`;
   }
@@ -1793,7 +1803,7 @@
       tries: S.urges.length, pledgesMade, maxDayPledges, goalsSet, moods: new Set(Object.values(S.journal).map((j) => j.mood).filter(Boolean)).size,
       quotesN: (U.quotes || []).length, examsSet: (U.exams || []).length, reportSeen: U.reportSeen ? 1 : 0,
       badgeCount: Object.keys(U.badges || {}).length, achCount: Object.keys(U.achievements || {}).length,
-      level: levelOf(U.xp), examClean: U.exams.filter((e) => e.clean).length + (U.examCleanOld || 0),
+      stars: starsOf(U.xp), level: levelOf(U.xp), examClean: U.exams.filter((e) => e.clean).length + (U.examCleanOld || 0),
     };
   }
 
