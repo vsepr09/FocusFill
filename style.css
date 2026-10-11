@@ -893,3 +893,7 @@ textarea:focus { border-color: var(--accent); }
 .tq-body { flex: 1; min-width: 0; }
 .tq-label { display: block; font-size: .7rem; font-weight: 800; letter-spacing: .12em; color: var(--muted); }
 .tq-text { margin-top: 3px; font-size: 1rem; font-weight: 600; line-height: 1.55; color: var(--ink); word-break: keep-all; }
+
+/* v1.5.2 */
+.mine-quote .mn-text { margin-top: 0; }
+.today-quote { padding: 14px 18px; }
