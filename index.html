@@ -24,7 +24,7 @@
       if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="style.css?v=1.7.0" />
+  <link rel="stylesheet" href="style.css?v=1.7.2" />
 </head>
 <body>
   <div id="test-banner" class="test-banner hidden">테스트 모드 · 이 기기에만 저장돼요</div>
@@ -46,6 +46,23 @@
       <div class="load-bar"><i></i></div>
     </div>
   </section>
+
+  <script>
+    // 마지막 안전장치: 어떤 이유로든(앱 파일을 못 받았거나 실행이 멈춤) 30초가 지나도 로딩 화면이면 '다시 시도'를 보여줘요
+    setTimeout(function () {
+      var l = document.getElementById('screen-loading');
+      if (!l || l.className.indexOf('hidden') >= 0) return;
+      var e = document.getElementById('load-err');
+      if (e && e.className.indexOf('hidden') < 0) return;
+      var box = document.querySelector('.load-inner');
+      if (!box || document.getElementById('load-watchdog')) return;
+      var d = document.createElement('div');
+      d.id = 'load-watchdog'; d.className = 'load-err';
+      d.innerHTML = '<p>여는 데 시간이 오래 걸려요. 인터넷 연결을 확인하고 다시 시도해 주세요.</p><button class="btn primary" type="button">다시 시도</button>';
+      d.getElementsByTagName('button')[0].onclick = function () { location.reload(); };
+      box.appendChild(d);
+    }, 30000);
+  </script>
 
   <!-- 로그인 / 가입 -->
   <section id="screen-auth" class="screen center hidden">
@@ -248,7 +265,7 @@
   </div>
 
   <script src="firebase-config.js"></script>
-  <script src="quotes.js?v=1.7.0"></script>
-  <script src="app.js?v=1.7.0"></script>
+  <script src="quotes.js?v=1.7.2"></script>
+  <script src="app.js?v=1.7.2"></script>
 </body>
 </html>

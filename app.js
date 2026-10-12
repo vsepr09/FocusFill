@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.0';
+  const APP_VERSION = '1.7.2';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -71,7 +71,7 @@
   const TIER_X = [1, 1.2, 1.5, 2];
   const TIER_MS = [0, 3 * DAY, 7 * DAY, 30 * DAY];
   const ATTEND_REWARDS = [5, 5, 10, 10, 15, 15, 50];
-  const PLEDGE_MAX = 5, PLEDGE_XP_MAX = 3;
+  const PLEDGE_XP_MAX = 3;   // 다짐 개수는 제한 없어요 (경험치는 하루 3개까지)
   const GOAL_MAX = 5;
   const EXAM_LEAD_DAYS = 14;   // 시험 시작 2주 전부터 시험 기간
   const TIERS = { c: { name: '일반', xp: 10, star: '★' }, r: { name: '희귀', xp: 30, star: '★★' }, l: { name: '전설', xp: 80, star: '★★★' }, m: { name: '신화', xp: 200, star: '✦' } };
@@ -461,48 +461,179 @@
   const IS_IOS = /iPad|iPhone|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
   const IS_WEBKIT = IS_IOS || (/AppleWebKit/.test(UA) && !/Chrome|Chromium|Edg|Android/.test(UA));
 
+  // IndexedDB 점검: Firebase 로그인은 IndexedDB를 쓰는데, Safari(아이패드)에서 IndexedDB가 응답하지 않으면
+  // 로그인 확인이 끝나지 않아 로딩 화면에서 멈춰요. 먼저 깨워 보고(Safari 14 문제), 그래도 응답이 없으면
+  // Firebase가 IndexedDB 대신 localStorage를 쓰게 해서 절대 멈추지 않게 해요.
+  let idbBroken = false;
+  function idbWorks(ms) {
+    return new Promise((res) => {
+      let fin = false;
+      const done = (v) => { if (!fin) { fin = true; res(v); } };
+      setTimeout(() => done(false), ms);
+      try {
+        const r = indexedDB.open('focusfill-ping');
+        r.onsuccess = () => { try { r.result.close(); } catch (e) {} done(true); };
+        r.onerror = () => done(true);       // 오류라도 응답은 했어요
+        r.onblocked = () => done(true);
+      } catch (e) { done(true); }
+    });
+  }
+  async function idbReady() {
+    try {
+      if (!window.indexedDB) return;
+      if (IS_WEBKIT && typeof indexedDB.databases === 'function') {
+        let id = null;
+        const wake = new Promise((res) => {
+          const t = () => { try { indexedDB.databases().then(res, res); } catch (e) { res(); } };
+          id = setInterval(t, 100); t();
+        });
+        await withTimeout(wake, 1500, 'IndexedDB').catch(() => {});
+        clearInterval(id);
+      }
+      if (await idbWorks(3000)) return;
+      idbBroken = true;
+      try { Object.defineProperty(window, 'indexedDB', { configurable: true, get: () => undefined }); } catch (e) {}
+    } catch (e) {}
+  }
+
+  // 기기 저장소: 마지막으로 받은 기록과 아직 서버에 못 올린 기록을 localStorage에 둬요.
+  // Safari는 IndexedDB(Firestore 오프라인 저장)가 멈추는 일이 있어서, 오프라인·느린 연결에서도 이걸로 열려요.
+  function LocalCache() {
+    const KEY = 'focusfill_cache_v1', OUT = 'focusfill_outbox_v1';
+    const fresh = () => ({ docs: {}, cols: {} });
+    let c = null, out = null;
+    try { c = JSON.parse(localStorage.getItem(KEY)); } catch (e) { c = null; }
+    if (!c || typeof c.docs !== 'object' || typeof c.cols !== 'object') c = fresh();
+    try { out = JSON.parse(localStorage.getItem(OUT)); } catch (e) { out = null; }
+    if (!Array.isArray(out)) out = [];
+    let timer = null;
+    const flush = () => {
+      clearTimeout(timer); timer = null;
+      try { localStorage.setItem(KEY, JSON.stringify(c)); } catch (e) { try { localStorage.removeItem(KEY); } catch (er) {} }
+    };
+    const later = () => { if (!timer) timer = setTimeout(flush, 400); };
+    addEventListener('pagehide', () => { if (timer) flush(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && timer) flush(); });
+    const saveOut = () => { try { localStorage.setItem(OUT, JSON.stringify(out)); } catch (e) {} };
+    const clone = (o) => (o == null ? null : JSON.parse(JSON.stringify(o)));
+    const isChild = (p, col) => p.length > col.length + 1 && p.startsWith(col + '/') && p.indexOf('/', col.length + 1) < 0;
+    return {
+      getDoc(path) { return Object.prototype.hasOwnProperty.call(c.docs, path) ? clone(c.docs[path]) : undefined; },
+      putDoc(path, data) { c.docs[path] = clone(data); later(); },
+      mergeDoc(path, data) { c.docs[path] = { ...(c.docs[path] || {}), ...clone(data) }; later(); },
+      delDoc(path) { c.docs[path] = null; later(); },
+      list(col) {
+        if (!c.cols[col]) return undefined;
+        return Object.keys(c.docs).filter((p) => isChild(p, col) && c.docs[p]).map((p) => ({ id: p.slice(col.length + 1), ...clone(c.docs[p]) }));
+      },
+      setList(col, items) {
+        Object.keys(c.docs).forEach((p) => { if (isChild(p, col)) delete c.docs[p]; });
+        items.forEach((x) => { const { id, ...rest } = x; c.docs[col + '/' + id] = clone(rest); });
+        c.cols[col] = 1; later();
+      },
+      ops: () => out,
+      push(op) { out.push(op); saveOut(); },
+      done(op) { const k = out.indexOf(op); if (k >= 0) { out.splice(k, 1); saveOut(); } },
+      clearDocs() { c = fresh(); try { localStorage.removeItem(KEY); } catch (e) {} },
+    };
+  }
+
   async function FirebaseBackend() {
     const base = 'https://www.gstatic.com/firebasejs/10.12.2/';
     await loadScript(base + 'firebase-app-compat.js');
     await Promise.all([loadScript(base + 'firebase-auth-compat.js'), loadScript(base + 'firebase-firestore-compat.js')]);
+    await idbReady();
     firebase.initializeApp(cfg);
     const auth = firebase.auth(), fs = firebase.firestore();
     // 학교·공용 와이파이처럼 실시간 연결이 막힌 곳에서도 되도록 자동으로 다른 연결 방식을 써요
     try { fs.settings({ experimentalAutoDetectLongPolling: true, merge: true }); } catch (e) {}
-    // ProFill처럼: 기록을 이 기기에도 저장해 두고, 인터넷이 없으면 저장해 둔 기록으로 열려요
-    try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
+    // Firestore의 IndexedDB 저장은 Safari(아이패드)에서 멈출 수 있어서 Safari에서는 쓰지 않아요 (v1.5.13에서 찾은 원인).
+    // 대신 아래 LocalCache(localStorage)가 오프라인 기록을 맡아요.
+    const idbCache = !IS_WEBKIT && !idbBroken;
+    if (idbCache) { try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {} }
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+    const store = LocalCache();
+    let curUid = '';
+    const READ_MS = 6000;
+    let slowAt = 0;   // 서버가 방금 응답하지 않았으면 잠시 동안은 기기 저장소를 바로 써요 (로딩이 길어지지 않게)
+    const slowNow = () => Date.now() - slowAt < 30000;
+    let fromStore = false;   // 이번에 연 기록 중 기기 저장소에서 온 게 있는지 (서버와 다시 연결되면 새로 받아요)
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const offline = () => navigator.onLine === false;
-    // 읽기: 인터넷이 없으면 기기에 저장해 둔 것 먼저, 없으면 보통 방식
-    const read = (ref, label) => (offline()
-      ? ref.get({ source: 'cache' }).catch(() => withTimeout(ref.get(), 15000, label))
-      : withTimeout(ref.get(), 15000, label));
-    // 쓰기: 기기에는 바로 저장되고, 서버에는 연결되면 자동으로 올라가요. 인터넷이 없을 때 서버 응답을 기다리며 멈추지 않도록
-    const write = (pr) => {
-      pr.catch((e) => console.warn('저장 실패', e));
+    // 읽기: 서버(또는 크롬의 Firestore 저장소)에서 받고, 인터넷이 없거나 오래 걸리면 기기에 저장해 둔 기록으로
+    async function readDoc(path, label) {
+      const cached = store.getDoc(path);
+      if (offline()) {
+        if (cached !== undefined) { fromStore = true; return cached; }
+        if (idbCache) { try { const d = await withTimeout(fs.doc(path).get({ source: 'cache' }), 4000, label); const v = d.exists ? d.data() : null; store.putDoc(path, v); return v; } catch (e) {} }
+      }
+      if (slowNow() && cached !== undefined) { fromStore = true; return cached; }
+      try {
+        const d = await withTimeout(fs.doc(path).get(), READ_MS, label);
+        const v = d.exists ? d.data() : null;
+        store.putDoc(path, v);
+        return v;
+      } catch (e) { slowAt = Date.now(); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
+    }
+    async function readList(col, label) {
+      const cached = store.list(col);
+      if (offline()) {
+        if (cached !== undefined) { fromStore = true; return cached; }
+        if (idbCache) { try { const l = docs(await withTimeout(fs.collection(col).get({ source: 'cache' }), 4000, label)); store.setList(col, l); return l; } catch (e) {} }
+      }
+      if (slowNow() && cached !== undefined) { fromStore = true; return cached; }
+      try {
+        const list = docs(await withTimeout(fs.collection(col).get(), READ_MS, label));
+        store.setList(col, list);
+        return list;
+      } catch (e) { slowAt = Date.now(); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
+    }
+    // 쓰기: 기기 저장소에 바로 적고, 서버에 올라갈 때까지 '보낼 목록'에 남겨 둬요 (앱을 닫아도 다음에 다시 보내요)
+    function send(op) {
+      const ref = fs.doc(op.path);
+      const pr = op.k === 'del' ? ref.delete() : op.k === 'set' ? ref.set(op.data, { merge: true }) : ref.set(op.data);
+      pr.then(() => store.done(op), (e) => { console.warn('저장 실패', e); store.done(op); });
       return offline() ? Promise.resolve() : Promise.race([pr, new Promise((r) => setTimeout(r, 6000))]);
-    };
+    }
+    function write(k, path, data) {
+      if (k === 'del') store.delDoc(path); else if (k === 'set') store.mergeDoc(path, data); else store.putDoc(path, data);
+      const op = { k, path, data: data == null ? null : JSON.parse(JSON.stringify(data)), at: Date.now(), u: curUid || (auth.currentUser ? auth.currentUser.uid : '') };
+      store.push(op);
+      return send(op);
+    }
     return {
       mode: 'firebase',
-      onAuth(cb) { auth.onAuthStateChanged((u) => cb(u ? { uid: u.uid, email: u.email } : null)); },
+      onAuth(cb) { auth.onAuthStateChanged((u) => { curUid = u ? u.uid : ''; cb(u ? { uid: u.uid, email: u.email } : null); }); },
       signUp: (e, p) => auth.createUserWithEmailAndPassword(e, p),
       signIn: (e, p) => auth.signInWithEmailAndPassword(e, p),
-      signOut: () => auth.signOut(),
-      async get(path) { const d = await read(fs.doc(path), '기록 읽기'); return d.exists ? d.data() : null; },
-      set: (path, data) => write(fs.doc(path).set(data, { merge: true })),
-      put: (path, data) => write(fs.doc(path).set(data)),
-      async add(col, data) { const ref = fs.collection(col).doc(); await write(ref.set(data)); return ref.id; },
-      del: (path) => write(fs.doc(path).delete()),
+      signOut: () => { store.clearDocs(); return auth.signOut(); },
+      // 지난번에 서버에 못 올린 기록을 다시 보내요 (로그인한 사람 것만, 2주 이내)
+      replay(uid) {
+        store.ops().slice().forEach((op) => {
+          if (op.u !== uid) return;
+          if (Date.now() - op.at > 14 * DAY) { store.done(op); return; }
+          send(op).catch(() => {});
+        });
+      },
+      pending: () => store.ops().length,
+      stale: () => { const v = fromStore; fromStore = false; return v; },
+      get: (path) => readDoc(path, '기록 읽기'),
+      set: (path, data) => write('set', path, data),
+      put: (path, data) => write('put', path, data),
+      async add(col, data) { const id = fs.collection(col).doc().id; await write('put', `${col}/${id}`, data); return id; },
+      del: (path) => write('del', path, null),
       // 다른 기기에서 바뀐 내용 받기 (내가 방금 쓴 건 건너뜀)
       watch(path, cb) {
         return fs.doc(path).onSnapshot((snap) => {
           if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
-          cb(snap.exists ? snap.data() : null);
+          slowAt = 0;   // 서버가 다시 응답해요
+          const v = snap.exists ? snap.data() : null;
+          store.putDoc(path, v);
+          cb(v);
         }, () => {});
       },
-      async list(col) { return docs(await read(fs.collection(col), '기록 목록 읽기')); },
-      async query(col, field, value) { return docs(await read(fs.collection(col).where(field, '==', value), '친구 정보 읽기')); },
+      list: (col) => readList(col, '기록 목록 읽기'),
+      async query(col, field, value) { if (offline()) throw new Error('offline'); return docs(await withTimeout(fs.collection(col).where(field, '==', value).get(), 15000, '친구 정보 읽기')); },
     };
   }
 
@@ -731,6 +862,7 @@
     $('auth-hint').textContent = signup
       ? '비밀번호는 찾을 수 없으니 꼭 기억해 주세요. ProFill 계정이 있다면 가입 말고 로그인하세요.'
       : 'ProFill 아이디와 비밀번호로 바로 로그인할 수 있어요.';
+    if (idbBroken && !signup) $('auth-hint').textContent = '이 기기의 브라우저 저장소가 응답하지 않아서 다시 로그인이 필요해요. 기록은 계정에 그대로 있어요.';
     $('auth-error').textContent = '';
   }
   function setupAuth() {
@@ -909,7 +1041,7 @@
   }
   function onRemote(data) {
     if (!U || !me) return;
-    if (firstSnap && db.mode === 'firebase') { firstSnap = false; if (JSON.stringify(data && data.startAt) === JSON.stringify(U.startAt) && data && data.xp === U.xp) return; }
+    if (firstSnap && db.mode === 'firebase') { firstSnap = false; if (!(db.stale && db.stale()) && JSON.stringify(data && data.startAt) === JSON.stringify(U.startAt) && data && data.xp === U.xp) return; }
     firstSnap = false;
     if (!data || !data.onboarded) { location.reload(); return; }
     U = normalize(data);
@@ -1393,14 +1525,13 @@
     const list = pledgesOf(k), ylist = pledgesOf(yk).filter((p) => !p.check);
     const hr = new Date().getHours();
     const kept = list.filter((p) => p.check === 'yes').length;
-    const left = PLEDGE_MAX - list.length;
     return `<section class="card pledge-card">
       <div class="sec-head"><h2>오늘의 다짐</h2>${list.length ? `<span class="muted small">${kept}/${list.length} 지킴</span>` : ''}</div>
       ${pledgeStrip()}
       ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, false)).join('')}</ul>` : ''}
       ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, true)).join('')}</ul>` : ''}
-      ${left > 0 ? `<div class="pl-add">
-        <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="오늘의 다짐" /><button class="btn primary" data-act="make-pledge" type="button">추가</button></div></div>` : ''}
+      <div class="pl-add">
+        <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="오늘의 다짐" /><button class="btn primary" data-act="make-pledge" type="button">추가</button></div></div>
     </section>`;
   }
   // 다짐 카드 위: 이번 주 한 가지 · 진행 중인 실험
@@ -1416,7 +1547,6 @@
     if (!text) { toast('다짐을 적어주세요'); return; }
     const k = dateKey(now());
     const list = pledgesOf(k);
-    if (list.length >= PLEDGE_MAX) return toast(`다짐은 하루 ${PLEDGE_MAX}개까지예요`);
     if (list.some((p) => p.text === text)) return toast('이미 있는 다짐이에요');
     const cnt = dailyOf(k).pledgeXpCount || 0;
     let got = 0;
@@ -1661,7 +1791,8 @@
     if (!inp) return;
     const text = (inp.value || '').trim();
     const yk = yesterdayOpen();
-    const key = ui.jDay === 'y' && yk ? yk : dateKey(now());
+    if (ui.jDay === 'y' && !yk) { ui.jDay = 't'; toast('어제 한 줄은 정오까지 쓸 수 있어요'); renderHome(); return; }
+    const key = ui.jDay === 'y' ? yk : dateKey(now());
     const prev = S.journal[key];
     const score = ui.score;
     if (score == null) { toast('별점을 매겨 주세요'); return; }
@@ -1935,8 +2066,8 @@
       oneKept: Object.values(U.weekReviews).filter((r) => r.prevKept === 'yes').length,
       monthReviews: Object.keys(U.monthReviews).length,
       examReviews: U.exams.filter((e) => e.review).length,
-      exps: (U.experiments || []).filter((x) => x.doneAt).length,
-      fits: fitsList().length,
+      exps: (U.experiments || []).filter((x) => x.doneAt && x.days >= EXP_XP_MIN).length,
+      fits: fitsList().filter((x) => x.days >= EXP_XP_MIN).length,
       lessonRv: U.lessonRvCount || 0,
       learned: items.filter((i) => i.learned).length,
       lettersWritten: (U.letters || []).length,
@@ -2159,7 +2290,7 @@
     const bestMonth = months.length ? months.reduce((p, c) => (c.ok > p.ok ? c : p)) : null;
     const scored = months.filter((x) => x.sc && x.sc.n >= 3);
     const bestScore = scored.length ? scored.reduce((p, c) => (c.sc.avg > p.sc.avg ? c : p)) : null;
-    const changes = Object.keys(U.monthReviews).filter((mk) => mk.startsWith(y + '-')).sort().map((mk) => ({ mk, t: U.monthReviews[mk].change })).filter((x) => x.t);
+    const changes = Object.keys(U.monthReviews).map((mk) => ({ mk: nextMonthKey(mk), t: U.monthReviews[mk].change })).filter((x) => x.t && x.mk.startsWith(y + '-')).sort((a, b) => a.mk.localeCompare(b.mk));
     const goalsDone = Object.keys(U.monthGoals).filter((mk) => mk.startsWith(y + '-')).reduce((s, mk) => s + goalsOf(mk).filter((x) => x.state === 'done').length, 0);
     const canPrev = new Date(U.trackStart).getFullYear() < y;
     return `<section class="card year-card">
@@ -2184,7 +2315,7 @@
         ${r.topSit ? `<li>무너질 때 가장 많았던 상황은 <b>${esc(r.topSit)}</b></li>` : ''}
         <li>${ongoing ? '남은 날도 지금처럼!' : '한 해 동안 수고 많았어요. 내년에도 함께 가요.'}</li>
       </ul>
-      ${changes.length ? `<h3 class="yr-tl-h">한 해 동안 바꾸려 한 것</h3><ol class="yr-tl">${changes.map((x) => `<li><span class="num">${Number(x.mk.split('-')[1]) % 12 + 1}월</span>${esc(x.t)}</li>`).join('')}</ol>` : ''}
+      ${changes.length ? `<h3 class="yr-tl-h">한 해 동안 바꾸려 한 것</h3><ol class="yr-tl">${changes.map((x) => `<li><span class="num">${Number(x.mk.split('-')[1])}월</span>${esc(x.t)}</li>`).join('')}</ol>` : ''}
     </section>`;
   }
 
@@ -3310,22 +3441,54 @@
   const activeExp = () => (U.experiments || []).find((x) => !x.doneAt && !x.stopped) || null;
   const expPending = () => { const x = activeExp(); return x && now() >= x.end ? x : null; };
   const expDayN = (x) => Math.min(x.days, Math.floor((dayStart(now()) - x.start) / DAY) + 1);
-  function openExpSheet(prefill) {
+  const EXP_MIN = 1, EXP_MAX = 90, EXP_XP_MIN = 3;   // 실험 기간: 1~90일 (3일 이상이면 경험치)
+  function openExpSheet(prefill, prevDays) {
+    if (expPending()) return toast('끝난 실험의 결과를 먼저 골라 주세요');
     if (activeExp()) return toast('진행 중인 실험이 끝나면 새로 시작할 수 있어요');
-    let days = 7;
+    const t0 = dayStart(now());
+    let days = prevDays >= EXP_MIN && prevDays <= EXP_MAX ? Math.round(prevDays) : 7;
+    let custom = ![3, 7, 14].includes(days);
+    const endKey = (d) => dateKey(addDays(t0, d - 1));
     openSheet(`<h2>새 실험</h2>
       <p class="muted">나에게 효과가 있는지 며칠 동안 해 봐요.</p>
       <p class="label">무엇을</p>
       <input id="xp-text" maxlength="40" placeholder="예: 자기 전 폰 거실에 두기" value="${esc(prefill || '')}" />
       <p class="label">며칠 동안</p>
-      <div class="seg" id="xp-days">${[3, 7, 14].map((d) => `<button class="seg-btn${d === days ? ' active' : ''}" data-d="${d}" type="button">${d}일</button>`).join('')}</div>
+      <div class="seg" id="xp-days">${[3, 7, 14].map((d) => `<button class="seg-btn${!custom && d === days ? ' active' : ''}" data-d="${d}" type="button">${d}일</button>`).join('')}<button class="seg-btn${custom ? ' active' : ''}" data-d="custom" type="button">직접</button></div>
+      <div class="xp-custom${custom ? '' : ' hidden'}" id="xp-custom">
+        <div class="time-row"><span>오늘부터</span><input type="date" id="xp-end" min="${endKey(EXP_MIN)}" max="${endKey(EXP_MAX)}" value="${endKey(days)}" /><span>까지</span></div>
+      </div>
+      <p class="muted small xp-sum" id="xp-sum"></p>
       <div class="sheet-actions"><button class="btn ghost" data-close type="button">취소</button><button class="btn primary" data-ok type="button">시작</button></div>`,
     (b) => {
-      b.querySelectorAll('#xp-days .seg-btn').forEach((x) => { x.onclick = () => { days = +x.dataset.d; b.querySelectorAll('#xp-days .seg-btn').forEach((y) => y.classList.toggle('active', y === x)); }; });
+      const sum = () => {
+        $('xp-sum').textContent = `${md(t0)} ~ ${md(addDays(t0, days - 1))} · ${days}일${days >= EXP_XP_MIN ? ` · 끝내면 +${XP.experiment} XP` : ' · 3일 이상이면 경험치를 받아요'}`;
+      };
+      const fromDate = () => {
+        const v = $('xp-end').value;
+        if (!v) return null;
+        return Math.round((keyTs(v) - t0) / DAY) + 1;
+      };
+      b.querySelectorAll('#xp-days .seg-btn').forEach((x) => {
+        x.onclick = () => {
+          b.querySelectorAll('#xp-days .seg-btn').forEach((y) => y.classList.toggle('active', y === x));
+          custom = x.dataset.d === 'custom';
+          $('xp-custom').classList.toggle('hidden', !custom);
+          if (custom) { const d = fromDate(); if (d) days = d; } else days = +x.dataset.d;
+          sum();
+        };
+      });
+      $('xp-end').onchange = $('xp-end').oninput = () => { const d = fromDate(); if (d) { days = d; sum(); } };
+      sum();
       b.querySelector('[data-close]').onclick = closeSheet;
       b.querySelector('[data-ok]').onclick = async () => {
         const text = $('xp-text').value.trim();
         if (!text) return toast('무엇을 해 볼지 적어주세요');
+        if (custom) {
+          const d = fromDate();
+          if (!d || d < EXP_MIN || d > EXP_MAX) return toast(`끝나는 날은 오늘부터 ${EXP_MAX}일 안으로 골라 주세요`);
+          days = d;
+        }
         closeSheet();
         const start = dayStart(now());
         const x = { id: 'x' + uid6(), text, days, start, end: addDays(start, days), at: now() };
@@ -3354,10 +3517,10 @@
   async function rateExp(v) {
     const x = expPending();
     if (!x) return;
-    const got = await gainFixed(XP.experiment);
+    const got = x.days >= EXP_XP_MIN ? await gainFixed(XP.experiment) : 0;
     try { await saveUser({ experiments: U.experiments.map((e) => (e.id === x.id ? { ...e, rating: v, doneAt: now(), xp: got } : e)), xp: U.xp }); } catch (e) {}
     savePublic();
-    toast(v === 'yes' ? `나에게 맞는 방법에 넣었어요 (+${got} XP)` : `실험을 마쳤어요 (+${got} XP)`);
+    toast((v === 'yes' ? '나에게 맞는 방법에 넣었어요' : '실험을 마쳤어요') + (got ? ` (+${got} XP)` : ''));
     refreshViews(); checkAchievements();
   }
   async function stopExp() {
@@ -3664,6 +3827,81 @@
     if (ui.tab === 'settings') renderSettings();
     toast('백업 파일을 저장했어요');
   }
+  // 가져온 백업 정리: 숫자·날짜·선택값은 형식이 맞을 때만 받아요 (이상한 파일이 화면을 깨뜨리지 않게)
+  const isNum = (v) => typeof v === 'number' && isFinite(v);
+  const DK_RE = /^\d{4}-\d{2}-\d{2}$/, MK_RE = /^\d{4}-\d{2}$/, ID_RE2 = /^[\w-]{1,64}$/;
+  const str = (v, n = 500) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const pickObj = (o, keyRe, fn) => {
+    const out = {};
+    if (o && typeof o === 'object' && !Array.isArray(o)) Object.keys(o).forEach((k) => { if (keyRe.test(k)) { const v = fn(o[k]); if (v != null) out[k] = v; } });
+    return out;
+  };
+  const numOr = (v, d = null) => (isNum(v) ? v : d);
+  function cleanUser(u) {
+    const o = {};
+    ['nickname', 'gender', 'friendCode', 'honestDay', 'comebackDay', 'reportSeen', 'monthSeen', 'balanceSeen', 'lessonSeenDay'].forEach((k) => { if (typeof u[k] === 'string') o[k] = str(u[k], 40); });
+    if (!['male', 'female', 'none'].includes(o.gender)) o.gender = 'none';
+    ['xp', 'xpHours', 'bestMs', 'urgeWins', 'lastDur', 'multFloor', 'trackStart', 'rewardFrom', 'createdAt', 'comebackDone', 'recordBreaks', 'maxFriends', 'lessonBase', 'lessonRvCount', 'lastBackupAt', 'urgeMinutes', 'yearSeen', 'examCleanOld'].forEach((k) => { if (isNum(u[k])) o[k] = u[k]; });
+    o.multFloor = Math.max(0, Math.min(3, Math.floor(o.multFloor || 0)));
+    if (![5, 10, 15].includes(o.urgeMinutes)) o.urgeMinutes = 10;
+    o.startAt = numOr(u.startAt); o.endedAt = numOr(u.endedAt);
+    if (u.comeback && isNum(u.comeback.startAt) && isNum(u.comeback.targetMs)) o.comeback = { startAt: u.comeback.startAt, prevMs: numOr(u.comeback.prevMs, 0), targetMs: u.comeback.targetMs };
+    ['riskOn', 'codeOk', 'wasTop1', 'whyAsked'].forEach((k) => { if (typeof u[k] === 'boolean') o[k] = u[k]; });
+    o.onboarded = true;
+    ['targets', 'activities', 'quotes', 'whys', 'subjects'].forEach((k) => { if (Array.isArray(u[k])) o[k] = u[k].filter((x) => typeof x === 'string').map((x) => str(x, 80)).slice(0, 100); });
+    if (!o.targets || !o.targets.length) o.targets = [...BASE_TARGETS];
+    if (u.share && typeof u.share === 'object') { o.share = {}; Object.keys(u.share).forEach((k) => { if (/^\w{1,20}$/.test(k)) o.share[k] = !!u.share[k]; }); }
+    o.badges = pickObj(u.badges, ID_RE2, (v) => numOr(v));
+    o.achievements = pickObj(u.achievements, ID_RE2, (v) => numOr(v));
+    if (u.attend && typeof u.attend === 'object') o.attend = { last: DK_RE.test(u.attend.last) ? u.attend.last : '', streak: numOr(u.attend.streak, 0), total: numOr(u.attend.total, 0), best: numOr(u.attend.best, 0) };
+    const pl = (p) => (p && typeof p === 'object' ? { id: ID_RE2.test(p.id) ? p.id : 'p' + uid6(), text: str(p.text, 60), check: ['yes', 'no'].includes(p.check) ? p.check : null, xp: numOr(p.xp, 0), at: numOr(p.at, 0), checkAt: numOr(p.checkAt, 0) } : null);
+    o.daily = pickObj(u.daily, DK_RE, (d) => {
+      if (!d || typeof d !== 'object') return null;
+      const x = {};
+      if (Array.isArray(d.pledges)) x.pledges = d.pledges.map(pl).filter(Boolean);
+      if (typeof d.pledge === 'string') { x.pledge = str(d.pledge, 60); x.check = ['yes', 'no'].includes(d.check) ? d.check : null; x.checkXp = numOr(d.checkXp, 0); }
+      ['att', 'pledgeXpCount', 'calmXp', 'focusXpBase', 'qAlt'].forEach((k) => { if (isNum(d[k])) x[k] = d[k]; });
+      if (d.review && typeof d.review === 'object') x.review = d.review.skip ? { skip: true, at: numOr(d.review.at, 0) } : { before: str(d.review.before, 80), next: str(d.review.next, 80), at: numOr(d.review.at, 0), xp: numOr(d.review.xp, 0) };
+      return x;
+    });
+    o.monthGoals = pickObj(u.monthGoals, MK_RE, (l) => (Array.isArray(l) ? l : [l]).filter((g) => g && GOAL_TYPES[g.type] && isNum(g.n)).map((g) => ({ id: ID_RE2.test(g.id) ? g.id : 'g' + uid6(), type: g.type, n: Math.max(1, Math.min(99, Math.round(g.n))), setAt: numOr(g.setAt, 0), ...(isNum(g.deleted) ? { deleted: g.deleted } : {}), ...(isNum(g.rewarded) ? { rewarded: g.rewarded } : {}) })));
+    o.exams = (Array.isArray(u.exams) ? u.exams : []).filter((e) => e && DK_RE.test(e.start) && DK_RE.test(e.end)).map((e) => {
+      const x = { id: ID_RE2.test(e.id) ? e.id : 'e' + uid6(), name: str(e.name, 20) || '시험', start: e.start, end: e.end };
+      if (typeof e.evaluated === 'boolean') x.evaluated = e.evaluated;
+      if (typeof e.clean === 'boolean') x.clean = e.clean;
+      if (e.reviewSkip) x.reviewSkip = true;
+      if (e.review && typeof e.review === 'object') x.review = { good: str(e.review.good, 80), note: str(e.review.note, 60), at: numOr(e.review.at, 0), xp: numOr(e.review.xp, 0) };
+      return x;
+    });
+    o.lessons = (Array.isArray(u.lessons) ? u.lessons : []).filter((c) => c && typeof c === 'object').slice(0, LESSON_CAT_MAX).map((c) => ({
+      id: ID_RE2.test(c.id) ? c.id : 'c' + uid6(), name: str(c.name, 20) || '교훈',
+      items: (Array.isArray(c.items) ? c.items : []).filter((i) => i && typeof i.text === 'string').slice(0, LESSON_MAX).map((i) => ({ id: ID_RE2.test(i.id) ? i.id : 'i' + uid6(), text: str(i.text, 80), ...(isNum(i.at) ? { at: i.at } : {}), rv: Math.max(0, Math.min(LESSON_RV.length, Math.floor(numOr(i.rv, 0)))), ...(isNum(i.learned) ? { learned: i.learned } : {}) })),
+    }));
+    o.weekReviews = pickObj(u.weekReviews, DK_RE, (r) => (r && typeof r === 'object' ? { good: str(r.good, 200), next: str(r.next, 40), prevKept: ['yes', 'half', 'no'].includes(r.prevKept) ? r.prevKept : null, at: numOr(r.at, 0), xp: numOr(r.xp, 0) } : null));
+    o.monthReviews = pickObj(u.monthReviews, MK_RE, (r) => (r && typeof r === 'object' ? { best: str(r.best, 200), regret: str(r.regret, 200), change: str(r.change, 40), at: numOr(r.at, 0), xp: numOr(r.xp, 0) } : null));
+    o.experiments = (Array.isArray(u.experiments) ? u.experiments : []).filter((x) => x && Number.isInteger(x.days) && x.days >= 1 && x.days <= 90 && isNum(x.start) && isNum(x.end)).map((x) => ({
+      id: ID_RE2.test(x.id) ? x.id : 'x' + uid6(), text: str(x.text, 40), days: x.days, start: x.start, end: x.end, at: numOr(x.at, x.start),
+      ...(['yes', 'unsure', 'no'].includes(x.rating) ? { rating: x.rating } : {}), ...(isNum(x.doneAt) ? { doneAt: x.doneAt } : {}), ...(isNum(x.stopped) ? { stopped: x.stopped } : {}), ...(isNum(x.xp) ? { xp: x.xp } : {}),
+    }));
+    o.letters = (Array.isArray(u.letters) ? u.letters : []).filter((l) => l && typeof l.text === 'string' && isNum(l.at) && isNum(l.openAt)).map((l) => ({
+      id: ID_RE2.test(l.id) ? l.id : 'l' + uid6(), text: str(l.text, 500), at: l.at, openAt: l.openAt, kind: str(l.kind, 10),
+      snap: { lv: numOr(l.snap && l.snap.lv, 1), best: numOr(l.snap && l.snap.best, 0), study: numOr(l.snap && l.snap.study, 0) },
+      ...(isNum(l.openedAt) ? { openedAt: l.openedAt, xp: numOr(l.xp, 0) } : {}),
+    }));
+    return o;
+  }
+  function cleanBackup(d) {
+    const arr = (k, fn) => (Array.isArray(d[k]) ? d[k] : []).map((x) => (x && typeof x === 'object' ? fn(x) : null)).filter(Boolean);
+    const okId = (x) => (ID_RE2.test(String(x.id || '')) ? x.id : uid6());
+    return {
+      ...d,
+      user: cleanUser(d.user),
+      streaks: arr('streaks', (x) => (isNum(x.start) && isNum(x.end) ? { id: okId(x), start: x.start, end: x.end, durationMs: numOr(x.durationMs, x.end - x.start), reason: str(x.reason, 20) || '기타', situations: Array.isArray(x.situations) ? x.situations.filter((t) => typeof t === 'string').map((t) => str(t, 20)) : [], memo: str(x.memo, 60) } : null)),
+      urges: arr('urges', (x) => (isNum(x.at) ? { id: okId(x), at: x.at, minutes: numOr(x.minutes, 10), activity: str(x.activity, 40), target: str(x.target, 20), result: x.result === 'win' ? 'win' : 'lose' } : null)),
+      journal: arr('journal', (x) => (DK_RE.test(String(x.id)) && typeof x.text === 'string' ? { id: x.id, text: str(x.text, 80), ...(isNum(x.score) && x.score >= 0 && x.score <= 5 ? { score: Math.round(x.score * 2) / 2 } : {}), ...(MOOD_SCORE[x.mood] != null ? { mood: x.mood } : {}), q: str(x.q, 60), updatedAt: numOr(x.updatedAt, 0) } : null)),
+      focus: arr('focus', (x) => (isNum(x.start) && isNum(x.end) && isNum(x.ms) ? { id: okId(x), start: x.start, end: x.end, ms: x.ms, mins: numOr(x.mins, 25), subject: str(x.subject, 10), done: !!x.done, xp: numOr(x.xp, 0) } : null)),
+    };
+  }
   function validBackup(d) {
     return d && d.app === 'FocusFill' && d.kind === 'backup' && d.user && typeof d.user === 'object' && d.user.onboarded
       && ['streaks', 'urges', 'journal', 'focus'].every((k) => d[k] == null || Array.isArray(d[k]));
@@ -3681,6 +3919,7 @@
         let d = null;
         try { d = JSON.parse(rd.result); } catch (e) { d = null; }
         if (!validBackup(d)) return toast('FocusFill 백업 파일이 아니에요', null, 3500);
+        try { d = cleanBackup(d); } catch (e) { return toast('FocusFill 백업 파일이 아니에요', null, 3500); }
         previewImport(d);
       };
       rd.onerror = () => toast('파일을 읽지 못했어요');
@@ -3739,6 +3978,7 @@
     $('top-name').textContent = U.nickname;
     switchTab('home');
     toast('백업으로 바꿨어요');
+    setTimeout(() => { checkCalm(); checkGoals(); checkAchievements(); }, 600);
   }
 
   /* ---------- 성장 탭 ---------- */
@@ -3847,7 +4087,7 @@
       case 'exp-new': return openExpSheet('');
       case 'exp-rate': el.disabled = true; return rateExp(el.dataset.v);
       case 'exp-stop': return stopExp();
-      case 'exp-again': { const x = (U.experiments || []).find((e) => e.id === el.dataset.id); return openExpSheet(x ? x.text : ''); }
+      case 'exp-again': { const x = (U.experiments || []).find((e) => e.id === el.dataset.id); return openExpSheet(x ? x.text : '', x && x.days); }
       case 'letter-new': return openLetterWrite();
       case 'letter-open': return openLetter(el.dataset.id);
       case 'letter-del':
@@ -3950,6 +4190,7 @@
       case 'guide': return openGuide(false);
       case 'logout':
         if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 로그아웃해 주세요. 아직 서버에 올라가지 않은 기록이 있을 수 있어요.', null, 4000);
+        if (db.pending && db.pending() > 0) return toast('아직 서버에 올라가는 중인 기록이 있어요. 잠시 뒤 다시 해 주세요.', null, 4000);
         return confirmSheet('로그아웃할까요?', '기록은 계정에 그대로 남아 있어요.', '로그아웃', async () => {
           clearInterval(tickTimer); U = null; await db.signOut();
         }, false);
@@ -4059,6 +4300,8 @@
     $('cel-ok').onclick = nextCelebrate;
     $('urge-lose').onclick = () => finishUrge('lose');
     $('urge-win').onclick = () => finishUrge('win');
+    // 새로고침 뒤에도 끝날 때 소리가 나도록: 집중 중에 화면을 한 번 누르면 소리를 켜 둬요
+    ['pointerdown', 'touchstart', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { if (U && U.focus) unlockAudio(); }, { passive: true }));
     $('fo-pause').onclick = toggleFocusPause;
     $('fo-stop').onclick = stopFocus;
     $('fo-min').onclick = () => focusUi(false);
@@ -4119,6 +4362,7 @@
   function showLoadError(retry, detail) {
     const box = document.querySelector('.load-inner');
     if (!box) return;
+    const wd = $('load-watchdog'); if (wd) wd.remove();
     let el = $('load-err');
     if (!el) {
       el = document.createElement('div'); el.id = 'load-err'; el.className = 'load-err';
@@ -4132,7 +4376,7 @@
   const onLoadingScreen = () => { const l = $('screen-loading'); return !!l && !l.classList.contains('hidden'); };
   let lastLoadErr = '';
   async function readUserDoc() {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       try { return { data: await db.get(userPath()) }; } catch (e) { lastLoadErr = (e && (e.code || e.message)) || String(e); await new Promise((r) => setTimeout(r, 700 * (i + 1))); }
     }
     return null;
@@ -4156,6 +4400,7 @@
       }
       go('screen-loading');
       if ($('load-err')) hide($('load-err'));
+      if (db.replay) { try { db.replay(user.uid); } catch (e) {} }
       const got = await readUserDoc();
       if (me !== user) return;
       if (!got) { showLoadError(() => onUser(user), lastLoadErr); return; }

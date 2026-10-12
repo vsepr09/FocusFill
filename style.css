@@ -1300,3 +1300,16 @@ button.rv-item:hover { border-color: var(--muted); }
 .rec-tabs .seg-btn { font-size: .86rem; }
 @media (max-width: 420px) { .rec-tabs .seg-btn { font-size: .78rem; padding: 8px 2px; } }
 @media (max-width: 640px) { .fc-clock { font-size: 2.2rem; } .cmp-r { grid-template-columns: minmax(5em, 1.1fr) 1fr 1fr 2em; gap: 6px; font-size: .86rem; } }
+/* 아주 좁은 화면(아이폰 SE 등): 시험 D-n을 레벨 칸 위로 */
+@media (max-width: 360px) {
+  .hero-side { flex-wrap: wrap; }
+  .hero-side .exam-box { flex: 1 1 100%; justify-items: center; padding: 6px 12px; }
+  .hero-side .ex-d { font-size: 1.8rem; }
+}
+.star-row { flex-wrap: wrap; row-gap: 2px; }
+@media (max-width: 360px) { .stars.s-lg { font-size: 30px; gap: 3px; } .st-zero { height: 30px; } }
+
+/* v1.7.2 — 실험 기간 직접 고르기 */
+.xp-custom { margin-top: 10px; }
+.xp-custom input[type="date"] { width: auto; flex: 1; min-width: 0; }
+.xp-sum { margin-top: 10px; }
