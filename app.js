@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.2';
+  const APP_VERSION = '1.7.3';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -390,6 +390,14 @@
   const useFirebase = !!(cfg.apiKey && !String(cfg.apiKey).startsWith('YOUR'));
   function authError(code) { const e = new Error(code); e.code = code; return e; }
 
+  // Firestore의 set(merge)처럼 안쪽 객체까지 합쳐요 (배열은 통째로 바뀌어요)
+  const isPlain = (o) => o && typeof o === 'object' && !Array.isArray(o);
+  function deepMerge(a, b) {
+    const out = isPlain(a) ? { ...a } : {};
+    Object.keys(b || {}).forEach((k) => { out[k] = isPlain(b[k]) && isPlain(out[k]) ? deepMerge(out[k], b[k]) : b[k]; });
+    return out;
+  }
+
   // 테스트 모드: 모든 데이터를 이 브라우저에만 저장 (여러 계정 테스트 가능)
   function LocalBackend() {
     const KEY = 'focusfill_local_v1';
@@ -422,7 +430,7 @@
       },
       async signOut() { s.session = null; save(); listener(null); },
       async get(path) { return s.docs[path] ? clone(s.docs[path]) : null; },
-      async set(path, data) { s.docs[path] = { ...(s.docs[path] || {}), ...clone(data) }; save(); },
+      async set(path, data) { s.docs[path] = deepMerge(s.docs[path], clone(data)); save(); },
       async put(path, data) { s.docs[path] = clone(data); save(); },
       async add(col, data) { const id = uid6(); s.docs[col + '/' + id] = clone(data); save(); return id; },
       async del(path) { delete s.docs[path]; save(); },
@@ -490,7 +498,7 @@
         await withTimeout(wake, 1500, 'IndexedDB').catch(() => {});
         clearInterval(id);
       }
-      if (await idbWorks(3000)) return;
+      if (await idbWorks(4000)) return;
       idbBroken = true;
       try { Object.defineProperty(window, 'indexedDB', { configurable: true, get: () => undefined }); } catch (e) {}
     } catch (e) {}
@@ -520,7 +528,7 @@
     return {
       getDoc(path) { return Object.prototype.hasOwnProperty.call(c.docs, path) ? clone(c.docs[path]) : undefined; },
       putDoc(path, data) { c.docs[path] = clone(data); later(); },
-      mergeDoc(path, data) { c.docs[path] = { ...(c.docs[path] || {}), ...clone(data) }; later(); },
+      mergeDoc(path, data) { c.docs[path] = deepMerge(c.docs[path], clone(data)); later(); },
       delDoc(path) { c.docs[path] = null; later(); },
       list(col) {
         if (!c.cols[col]) return undefined;
@@ -610,12 +618,13 @@
       // 지난번에 서버에 못 올린 기록을 다시 보내요 (로그인한 사람 것만, 2주 이내)
       replay(uid) {
         store.ops().slice().forEach((op) => {
+          if (!op.u) { store.done(op); return; }
           if (op.u !== uid) return;
           if (Date.now() - op.at > 14 * DAY) { store.done(op); return; }
           send(op).catch(() => {});
         });
       },
-      pending: () => store.ops().length,
+      pending: () => store.ops().filter((op) => op.u === curUid).length,
       stale: () => { const v = fromStore; fromStore = false; return v; },
       get: (path) => readDoc(path, '기록 읽기'),
       set: (path, data) => write('set', path, data),
@@ -1254,9 +1263,17 @@
     return [];
   }
   async function setDaily(k, patch, extra = {}) {
+    try { await saveDaily(k, patch, extra); } catch (e) {}
+  }
+  // 하루 기록(daily)은 통째로 보내지 않고 그날의 바뀐 칸만 보내요.
+  // 오래된 화면(다른 기기, 늦게 열린 앱)이 저장해도 다른 날·다른 칸의 기록을 덮어쓰지 않아요.
+  async function saveDaily(k, patch, extra = {}) {
     const daily = { ...(U.daily || {}) };
     daily[k] = { ...(daily[k] || {}), ...patch };
-    try { await saveUser({ daily, ...extra }); } catch (e) {}
+    U.daily = daily;
+    Object.assign(U, extra);
+    try { await db.set(userPath(), { daily: { [k]: patch }, ...extra }); }
+    catch (e) { toast(navigator.onLine === false ? '인터넷이 끊겨 있어요. 연결되면 다시 저장해요.' : '저장하지 못했어요. 다시 시도해 주세요.'); throw e; }
   }
 
   /* ====================== 이번 달 목표 (여러 개) ====================== */
@@ -1499,8 +1516,7 @@
     const today = dateKey(now());
     const got = await gainFixed(n.base);
     const attend = { last: today, streak: n.streak, total: (a.total || 0) + 1, best: Math.max(a.best || 0, n.streak) };
-    const daily = { ...(U.daily || {}) }; daily[today] = { ...(daily[today] || {}), att: 1 };
-    try { await saveUser({ attend, daily, xp: U.xp }); } catch (e) {}
+    try { await saveDaily(today, { att: 1 }, { attend, xp: U.xp }); } catch (e) {}
     savePublic();
     if (n.pos === 6) celebrate({ medal: '7', kind: 'alt', kicker: '7일 연속 출석', title: '일주일 내내 왔어요!', sub: '내일부터 다시 1일째 보상이 시작돼요.', xp: got });
     else toast(`출석 ${n.streak}일째 (+${got} XP)`);
@@ -1521,14 +1537,21 @@
     return `<li class="pl${p.check ? ' ' + p.check : ''}"><span class="pl-text">${esc(p.text)}</span>${state}</li>`;
   }
   function pledgeCardHtml() {
-    const k = dateKey(now()), yk = dateKey(addDays(dayStart(now()), -1));
-    const list = pledgesOf(k), ylist = pledgesOf(yk).filter((p) => !p.check);
-    const hr = new Date().getHours();
+    const k = dateKey(now());
+    const list = pledgesOf(k);
     const kept = list.filter((p) => p.check === 'yes').length;
+    // 지난 다짐: 체크하지 않은 건 체크하거나 지울 때까지 계속 보여요 (최근 7일)
+    const past = [];
+    for (let i = 1; i <= 7; i++) {
+      const d0 = addDays(dayStart(now()), -i), pk = dateKey(d0);
+      if (addDays(d0, 1) <= U.trackStart) break;
+      const l = pledgesOf(pk).filter((p) => !p.check);
+      if (l.length) past.push({ pk, d0, i, l });
+    }
     return `<section class="card pledge-card">
       <div class="sec-head"><h2>오늘의 다짐</h2>${list.length ? `<span class="muted small">${kept}/${list.length} 지킴</span>` : ''}</div>
       ${pledgeStrip()}
-      ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, false)).join('')}</ul>` : ''}
+      ${past.map((x) => `<p class="pl-sub">${x.i === 1 ? '어제 다짐' : `${md(x.d0)} 다짐`}</p><ul class="pl-list">${x.l.map((p) => pledgeRow(x.pk, p, true)).join('')}</ul>`).join('')}
       ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, true)).join('')}</ul>` : ''}
       <div class="pl-add">
         <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="오늘의 다짐" /><button class="btn primary" data-act="make-pledge" type="button">추가</button></div></div>
@@ -3101,10 +3124,8 @@
         S.focus.push({ id: f.id, ...rec });
         S.focus.sort((a, b) => a.start - b.start);
         if (got) await addXp(got);
-        const daily = { ...(U.daily || {}) };
-        daily[k] = { ...(daily[k] || {}), focusXpBase: used + base };
         U.focus = null;
-        await saveUser({ focus: null, daily, xp: U.xp });
+        await saveDaily(k, { focusXpBase: used + base }, { focus: null, xp: U.xp });
       } else { U.focus = null; await saveUser({ focus: null }); }
       savePublic();
       const o = $('focus');
