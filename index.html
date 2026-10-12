@@ -24,7 +24,7 @@
       if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="style.css?v=1.6.6" />
+  <link rel="stylesheet" href="style.css?v=1.7.0" />
 </head>
 <body>
   <div id="test-banner" class="test-banner hidden">테스트 모드 · 이 기기에만 저장돼요</div>
@@ -191,6 +191,7 @@
       <div class="bar thin"><div class="fill" id="urge-bar"></div></div>
       <p class="label" id="urge-label">그동안 이거 해볼까요?</p>
       <p class="activity" id="urge-activity"></p>
+      <p class="urge-why hidden" id="urge-why"></p>
       <div class="urge-actions" id="urge-running">
         <button class="btn ghost" id="urge-shuffle" type="button">다른 거 보기</button>
         <button class="btn ghost" id="urge-giveup" type="button">결국 졌다</button>
@@ -201,6 +202,33 @@
       </div>
     </div>
   </div>
+
+  <!-- 집중 타이머 -->
+  <div class="focus-overlay hidden" id="focus">
+    <div class="urge-inner" id="fo-run">
+      <p class="muted fo-sub" id="fo-sub"></p>
+      <div class="fo-clock num" id="fo-clock">25:00</div>
+      <div class="bar thin"><div class="fill" id="fo-bar"></div></div>
+      <p class="fo-paused">일시정지</p>
+      <div class="urge-actions fo-acts">
+        <button class="btn ghost" id="fo-pause" type="button">일시정지</button>
+        <button class="btn ghost" id="fo-stop" type="button">그만두기</button>
+      </div>
+      <button class="link fo-min" id="fo-min" type="button">작게 보기</button>
+    </div>
+    <div class="urge-inner hidden" id="fo-done">
+      <div class="fo-medal">✓</div>
+      <h2>집중 완료!</h2>
+      <p class="muted" id="fo-done-sub"></p>
+      <p class="cel-xp" id="fo-done-xp"></p>
+      <button class="btn primary wide" id="fo-ok" type="button">확인</button>
+    </div>
+  </div>
+
+  <!-- 종료 버튼을 누르는 동안: 내가 시작한 이유 -->
+  <div class="why-pop hidden" id="why-pop" aria-live="polite"><span>내가 시작한 이유</span><p id="why-pop-text"></p></div>
+
+  <input type="file" id="import-file" accept=".json,application/json" class="hidden" />
 
   <div class="celebrate hidden" id="celebrate" role="dialog" aria-modal="true" aria-labelledby="cel-title">
     <canvas id="confetti" aria-hidden="true"></canvas>
@@ -220,7 +248,7 @@
   </div>
 
   <script src="firebase-config.js"></script>
-  <script src="quotes.js?v=1.6.6"></script>
-  <script src="app.js?v=1.6.6"></script>
+  <script src="quotes.js?v=1.7.0"></script>
+  <script src="app.js?v=1.7.0"></script>
 </body>
 </html>

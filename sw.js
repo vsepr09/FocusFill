@@ -2,7 +2,7 @@
 // 사이트 파일: 인터넷이 되면 항상 새것을 받고, 안 되면 저장해 둔 것을 보여줘요.
 // Firebase 프로그램·글꼴: 버전이 고정돼 있어서 한 번 받아 두면 저장해 둔 것을 써요 (인터넷 없이도 로그인 상태로 열리도록).
 // 버전 이름이 바뀌면 브라우저가 새 서비스 워커를 받아서 바로 적용하고, 앱이 자동으로 새로고침돼요.
-const VERSION = 'focusfill-v1.6.6';
+const VERSION = 'focusfill-v1.7.0';
 const CACHE = VERSION;
 const CDN_CACHE = 'focusfill-cdn-v1';   // 버전이 바뀌어도 지우지 않아요
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'quotes.js', 'firebase-config.js', 'manifest.webmanifest', 'icon-r192.png', 'icon-r512.png', 'favicon-r32.png', 'apple-touch-icon.png'];

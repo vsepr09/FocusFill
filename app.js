@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.6.6';
+  const APP_VERSION = '1.7.0';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -56,7 +56,13 @@
     { id: 'd365', ms: 365 * DAY, label: '1년', short: '1Y', bonus: 750 },
   ];
   // v1.6.0 밸런스: 버틴 시간이 가장 큰 보상. 배수(연속·시험)는 디톡스 보상(버틴 시간·배지·고요한 날·참기·재도전)에만 붙어요
-  const XP = { hour: 2, urgeWin: 10, journal: 5, comeback: 15, monthGoal: 50, pledge: 2, check: 5, honest: 5, calm: 20 };
+  const XP = { hour: 2, urgeWin: 10, journal: 5, comeback: 15, monthGoal: 50, pledge: 2, check: 5, honest: 5, calm: 20,
+    focus: 2, endReview: 5, lessonReview: 2, experiment: 10, letter: 10, examReview: 15, weekReview: 10, monthReview: 20 };
+  // v1.7.0 집중 타이머: 25분마다 2 XP, 하루 최대 12 XP (시험 기간엔 ×1.5)
+  const FOCUS_UNIT = 25, FOCUS_DAY_MAX = 12, FOCUS_MIN_REC = 10;
+  const DEFAULT_SUBJECTS = ['국어', '수학', '영어', '과학', '사회'];
+  const LESSON_RV = [1, 7, 30, 90];   // 교훈 다시 보기 간격 (일)
+  const WHY_MAX = 3, LETTER_OPEN_MAX = 5;
   const EXAM_X = 1.5;          // 시험 기간 디톡스 보상 배수
   const STAR_XP = 5000;        // Lv.100 이후 별 하나에 필요한 경험치
   // 참기 성공 경험치: 하루 첫 번째 10, 두 번째 5, 세 번째 3, 그 뒤로는 없음
@@ -91,11 +97,11 @@
     { id: 'att3t', cat: '하루하루', tier: 'c', key: 'attTotal', need: 3, name: '세 번째 출석', desc: '출석 총 3일' },
     { id: 'att7t', cat: '하루하루', tier: 'c', key: 'attTotal', need: 7, name: '일곱 번째 출석', desc: '출석 총 7일' },
     { id: 'att2', cat: '하루하루', tier: 'c', key: 'attBest', need: 2, name: '이틀 연속', desc: '출석 2일 연속' },
-    { id: 'j3n', cat: '하루하루', tier: 'c', key: 'journals', need: 3, name: '세 줄', desc: '일기 3개' },
-    { id: 'j7n', cat: '하루하루', tier: 'c', key: 'journals', need: 7, name: '일곱 줄', desc: '일기 7개' },
-    { id: 'j2', cat: '하루하루', tier: 'c', key: 'jBest', need: 2, name: '이틀 일기', desc: '일기 2일 연속' },
-    { id: 'e_mood3', cat: '하루하루', tier: 'c', key: 'moods', need: 3, name: '여러 기분', desc: '일기에 기분 3가지 써 보기' },
-    { id: 'e_mood5', cat: '하루하루', tier: 'c', key: 'moods', need: 5, name: '모든 기분', desc: '일기에 기분 5가지 모두 써 보기' },
+    { id: 'j3n', cat: '하루하루', tier: 'c', key: 'journals', need: 3, name: '세 줄', desc: '한 줄 3개' },
+    { id: 'j7n', cat: '하루하루', tier: 'c', key: 'journals', need: 7, name: '일곱 줄', desc: '한 줄 7개' },
+    { id: 'j2', cat: '하루하루', tier: 'c', key: 'jBest', need: 2, name: '이틀 한 줄', desc: '한 줄 2일 연속' },
+    { id: 'e_mood3', cat: '하루하루', tier: 'c', key: 'scores', need: 3, name: '여러 하루', desc: '서로 다른 별점 3가지 매겨 보기' },
+    { id: 'e_mood5', cat: '하루하루', tier: 'c', key: 'scores', need: 6, name: '다채로운 하루', desc: '서로 다른 별점 6가지 매겨 보기' },
     { id: 'calm2', cat: '하루하루', tier: 'c', key: 'calmDays', need: 2, name: '고요한 이틀', desc: '고요한 날 총 2일' },
     { id: 'calmrun2', cat: '하루하루', tier: 'c', key: 'calmRun', need: 2, name: '이틀 연속 고요', desc: '고요한 날 2일 연속' },
     { id: 'ok1', cat: '하루하루', tier: 'c', key: 'okDays', need: 1, name: '지킨 하루', desc: '종료 없이 지킨 날 1일' },
@@ -151,16 +157,16 @@
     { id: 'bc18', cat: '배지', tier: 'l', key: 'badgeCount', need: 18, name: '배지 박물관', desc: '배지 18개 모으기' },
     { id: 'bc24', cat: '배지', tier: 'l', key: 'badgeCount', need: 24, name: '배지 전당', desc: '배지 24개 모으기' },
     { id: 'bcall', cat: '배지', tier: 'm', key: 'badgeCount', need: 0, name: '모든 배지', desc: '배지 전부 모으기' },
-    { id: 'j1', cat: '기록', tier: 'c', key: 'journals', need: 1, name: '첫 줄', desc: '첫 일기 쓰기' },
-    { id: 'j3', cat: '기록', tier: 'c', key: 'jBest', need: 3, name: '사흘 일기', desc: '일기 3일 연속' },
-    { id: 'j7', cat: '기록', tier: 'c', key: 'jBest', need: 7, name: '일주일 일기', desc: '일기 7일 연속' },
-    { id: 'j30n', cat: '기록', tier: 'r', key: 'journals', need: 30, name: '서른 줄', desc: '일기 30개' },
-    { id: 'j14', cat: '기록', tier: 'r', key: 'jBest', need: 14, name: '2주 일기', desc: '일기 14일 연속' },
-    { id: 'j30', cat: '기록', tier: 'r', key: 'jBest', need: 30, name: '한 달 일기', desc: '일기 30일 연속' },
-    { id: 'j60', cat: '기록', tier: 'l', key: 'jBest', need: 60, name: '두 달 일기', desc: '일기 60일 연속' },
-    { id: 'j100', cat: '기록', tier: 'l', key: 'journals', need: 100, name: '기록하는 사람', desc: '일기 100개' },
-    { id: 'j100run', cat: '기록', tier: 'l', key: 'jBest', need: 100, name: '백 일 일기', desc: '일기 100일 연속' },
-    { id: 'j365', cat: '기록', tier: 'm', key: 'journals', need: 300, name: '300일의 기록', desc: '일기 300개' },
+    { id: 'j1', cat: '기록', tier: 'c', key: 'journals', need: 1, name: '첫 줄', desc: '오늘 한 줄 처음 쓰기' },
+    { id: 'j3', cat: '기록', tier: 'c', key: 'jBest', need: 3, name: '사흘 한 줄', desc: '한 줄 3일 연속' },
+    { id: 'j7', cat: '기록', tier: 'c', key: 'jBest', need: 7, name: '일주일 한 줄', desc: '한 줄 7일 연속' },
+    { id: 'j30n', cat: '기록', tier: 'r', key: 'journals', need: 30, name: '서른 줄', desc: '한 줄 30개' },
+    { id: 'j14', cat: '기록', tier: 'r', key: 'jBest', need: 14, name: '2주 한 줄', desc: '한 줄 14일 연속' },
+    { id: 'j30', cat: '기록', tier: 'r', key: 'jBest', need: 30, name: '한 달 한 줄', desc: '한 줄 30일 연속' },
+    { id: 'j60', cat: '기록', tier: 'l', key: 'jBest', need: 60, name: '두 달 한 줄', desc: '한 줄 60일 연속' },
+    { id: 'j100', cat: '기록', tier: 'l', key: 'journals', need: 100, name: '기록하는 사람', desc: '한 줄 100개' },
+    { id: 'j100run', cat: '기록', tier: 'l', key: 'jBest', need: 100, name: '백 일 한 줄', desc: '한 줄 100일 연속' },
+    { id: 'j365', cat: '기록', tier: 'm', key: 'journals', need: 300, name: '300일의 기록', desc: '한 줄 300개' },
     { id: 'sit10', cat: '기록', tier: 'c', key: 'sitResets', need: 10, name: '나를 아는 중', desc: '상황까지 고른 종료 기록 10번' },
     { id: 'ls1', cat: '기록', tier: 'c', key: 'lessons', need: 1, name: '첫 교훈', desc: '교훈 1개 적기' },
     { id: 'ls10', cat: '기록', tier: 'r', key: 'lessons', need: 10, name: '교훈 노트', desc: '교훈 10개 적기' },
@@ -236,6 +242,37 @@
     { id: 'exam1', cat: '시험', tier: 'l', key: 'examClean', need: 1, name: '시험 기간 완주', desc: '시험 기간을 종료 없이 버티기' },
     { id: 'exam3', cat: '시험', tier: 'l', key: 'examClean', need: 2, name: '시험의 달인', desc: '시험 기간 2번을 종료 없이 버티기' },
     { id: 'exam6', cat: '시험', tier: 'm', key: 'examClean', need: 3, name: '시험 정복자', desc: '시험 기간 3번을 종료 없이 버티기' },
+    { id: 'fc1', cat: '집중', tier: 'c', key: 'focusDone', need: 1, name: '첫 집중', desc: '집중 타이머 처음 끝까지 하기' },
+    { id: 'fc10', cat: '집중', tier: 'c', key: 'focusDone', need: 10, name: '집중 열 번', desc: '집중 10번 끝까지 하기' },
+    { id: 'fh10', cat: '집중', tier: 'c', key: 'studyH', need: 10, name: '공부 10시간', desc: '집중 시간 총 10시간' },
+    { id: 'fh50', cat: '집중', tier: 'r', key: 'studyH', need: 50, name: '공부 50시간', desc: '집중 시간 총 50시간' },
+    { id: 'fh100', cat: '집중', tier: 'l', key: 'studyH', need: 100, name: '공부 100시간', desc: '집중 시간 총 100시간' },
+    { id: 'fh300', cat: '집중', tier: 'm', key: 'studyH', need: 300, name: '공부 300시간', desc: '집중 시간 총 300시간' },
+    { id: 'fday4', cat: '집중', tier: 'r', key: 'focusDayMax', need: 4, name: '네 세트', desc: '하루에 25분 이상 집중 4번' },
+    { id: 'frun7', cat: '집중', tier: 'r', key: 'focusRun', need: 7, name: '일주일 공부', desc: '7일 연속 집중 끝까지 하기' },
+    { id: 'frun30', cat: '집중', tier: 'l', key: 'focusRun', need: 30, name: '한 달 공부', desc: '30일 연속 집중 끝까지 하기' },
+    { id: 'fexam10', cat: '집중', tier: 'r', key: 'examStudyH', need: 10, name: '시험 기간 10시간', desc: '한 시험 기간에 집중 10시간' },
+    { id: 'gwhy', cat: '성장', tier: 'c', key: 'whys', need: 1, name: '나의 이유', desc: '내가 시작한 이유 적기' },
+    { id: 'grv1', cat: '성장', tier: 'c', key: 'endReviews', need: 1, name: '다시 보기', desc: '무너진 날 처음 돌아보기' },
+    { id: 'grv10', cat: '성장', tier: 'r', key: 'endReviews', need: 10, name: '넘어진 자리에서', desc: '무너진 날 10번 돌아보기' },
+    { id: 'gwr1', cat: '성장', tier: 'c', key: 'weekReviews', need: 1, name: '첫 주간 회고', desc: '주간 회고 처음 쓰기' },
+    { id: 'gwrr4', cat: '성장', tier: 'r', key: 'weekRun', need: 4, name: '한 달 내내 회고', desc: '주간 회고 4주 연속' },
+    { id: 'gwr12', cat: '성장', tier: 'r', key: 'weekReviews', need: 12, name: '회고 열두 번', desc: '주간 회고 12번' },
+    { id: 'gwr40', cat: '성장', tier: 'l', key: 'weekReviews', need: 40, name: '돌아보는 사람', desc: '주간 회고 40번' },
+    { id: 'gone10', cat: '성장', tier: 'r', key: 'oneKept', need: 10, name: '한 가지씩', desc: '이번 주 한 가지 10번 지키기' },
+    { id: 'gmr1', cat: '성장', tier: 'c', key: 'monthReviews', need: 1, name: '첫 월간 회고', desc: '월간 회고 처음 쓰기' },
+    { id: 'gmr6', cat: '성장', tier: 'l', key: 'monthReviews', need: 6, name: '반년의 회고', desc: '월간 회고 6번' },
+    { id: 'gex1', cat: '성장', tier: 'r', key: 'examReviews', need: 1, name: '시험 돌아보기', desc: '시험 회고 처음 쓰기' },
+    { id: 'gxp1', cat: '성장', tier: 'c', key: 'exps', need: 1, name: '첫 실험', desc: '실험 하나 끝내기' },
+    { id: 'gxp5', cat: '성장', tier: 'r', key: 'exps', need: 5, name: '실험가', desc: '실험 5개 끝내기' },
+    { id: 'gfit3', cat: '성장', tier: 'l', key: 'fits', need: 3, name: '나만의 방법', desc: '나에게 맞는 방법 3개 찾기' },
+    { id: 'glr10', cat: '성장', tier: 'c', key: 'lessonRv', need: 10, name: '되새기기', desc: '교훈 다시 보기 10번' },
+    { id: 'glearn5', cat: '성장', tier: 'r', key: 'learned', need: 5, name: '몸에 밴 교훈', desc: '익힌 교훈 5개' },
+    { id: 'glearn20', cat: '성장', tier: 'l', key: 'learned', need: 20, name: '교훈이 습관으로', desc: '익힌 교훈 20개' },
+    { id: 'glt1', cat: '성장', tier: 'c', key: 'lettersWritten', need: 1, name: '미래로 보낸 편지', desc: '미래의 나에게 편지 쓰기' },
+    { id: 'glo1', cat: '성장', tier: 'r', key: 'lettersOpened', need: 1, name: '과거에서 온 편지', desc: '편지 처음 받기' },
+    { id: 'glo5', cat: '성장', tier: 'l', key: 'lettersOpened', need: 5, name: '시간을 건넌 편지', desc: '편지 5통 받기' },
+    { id: 'gq30', cat: '성장', tier: 'r', key: 'qAnswered', need: 30, name: '질문 수집가', desc: '서로 다른 질문 30개에 답하기' },
     { id: 'ach10', cat: '업적', tier: 'r', key: 'achCount', need: 10, name: '업적 열 개', desc: '업적 10개 달성' },
     { id: 'ach30', cat: '업적', tier: 'l', key: 'achCount', need: 30, name: '업적 사냥꾼', desc: '업적 30개 달성' },
     { id: 'ach60', cat: '업적', tier: 'l', key: 'achCount', need: 60, name: '업적 수집가', desc: '업적 60개 달성' },
@@ -252,7 +289,7 @@
     wins_min: { name: '참기 성공', short: '참기 성공', unit: '번 이상', def: 10, min: 5, hidden: true },
     pledge_min: { name: '다짐 지키기', short: '다짐 지키기', unit: '번 이상', def: 20, min: 10 },
     attend_min: { name: '출석', short: '출석', unit: '일 이상', def: 25, min: 15 },
-    journal_min: { name: '일기', short: '일기 쓰기', unit: '일 이상', def: 15, min: 10 },
+    journal_min: { name: '오늘 한 줄', short: '한 줄 쓰기', unit: '일 이상', def: 15, min: 10 },
   };
   // 3레벨마다 칭호가 바뀌어요 (Lv.1~100, 칭호 34개)
   const MAX_LEVEL = 100;
@@ -269,12 +306,20 @@
     '팔굽혀펴기 10개', '내일 할 일 3개 적기', '친구한테 말 걸기', '세수하고 오기', '좋아하는 노래 한 곡 듣기',
   ];
   const FALLBACK_QUOTE = ['천 리 길도 발밑에서 시작된다.', '노자'];
-  const MOODS = ['😀', '🙂', '😐', '😕', '😣'];
+  const MOOD_SCORE = { '😀': 5, '🙂': 4, '😐': 3, '😕': 2, '😣': 1 };   // 예전 기분 → 별점
   const BUCKETS = [
     { label: '새벽', from: 0, to: 6 }, { label: '오전', from: 6, to: 12 },
     { label: '오후', from: 12, to: 18 }, { label: '저녁·밤', from: 18, to: 24 },
   ];
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+  // 오늘 한 줄 질문: 다섯 갈래 × 18개, 매일 바뀌어요
+  const QUESTIONS = [
+    ["오늘 고마웠던 사람은 누구인가요?", "오늘 작지만 좋았던 순간은?", "오늘 나를 웃게 한 건?", "오늘 당연하지 않게 느껴진 건?", "오늘 먹은 것 중 가장 맛있었던 건?", "오늘 들은 말 중 기분 좋았던 말은?", "오늘 도움받은 일이 있었나요?", "지금 내 곁에 있어서 다행인 건?", "오늘 날씨나 풍경에서 좋았던 건?", "오늘 내 몸이 잘해 준 일은?", "오늘 배운 것 중 고마운 건?", "요즘 고마운데 말 못 한 사람은?", "오늘 편안했던 시간은 언제였나요?", "오늘 나에게 힘이 된 물건은?", "오늘 친구와 나눈 즐거운 이야기는?", "오늘 가장 따뜻했던 장면은?", "오늘 무사히 지나가서 다행인 일은?", "오늘 하루에 고맙다고 한마디 한다면?"],
+    ["오늘 나를 칭찬한다면?", "오늘 미루지 않고 해낸 일은?", "오늘 참아 낸 순간이 있었나요?", "오늘 어제보다 나아진 점은?", "오늘 끝까지 해낸 일은?", "오늘 가장 집중했던 때는?", "오늘 나와의 약속을 지켰나요?", "오늘 용기를 낸 순간은?", "오늘 누군가에게 도움이 된 일은?", "오늘 새로 시도해 본 것은?", "오늘 가장 뿌듯했던 순간은?", "오늘 잘 쉰 순간은?", "오늘 포기하지 않은 것은?", "오늘 시간을 가장 잘 쓴 때는?", "오늘 나다웠던 순간은?", "오늘 실수했지만 잘 넘긴 일은?", "오늘 공부 중 가장 잘된 것은?", "오늘 지킨 작은 습관은?"],
+    ["오늘 폰 대신 한 일은?", "심심할 때 무엇을 했나요?", "오늘 남는 시간에 뭘 했나요?", "충동이 왔을 때 어떻게 넘겼나요?", "오늘 화면 없이 보낸 시간은?", "오늘 몸을 움직인 시간은?", "오늘 얼굴 보고 나눈 대화는?", "오늘 손으로 해 본 일은?", "오늘 읽은 것 중 기억나는 건?", "오늘 가장 오래 몰입한 일은?", "쉬는 시간에 무엇을 했나요?", "잠들기 전 무엇을 했나요?", "오늘 밖에서 본 것 중 기억나는 건?", "오늘 새로 알게 된 것은?", "오늘 정리하거나 치운 것은?", "오늘 들은 소리 중 좋았던 건?", "영상 대신 해 보니 괜찮았던 건?", "오늘 가장 조용했던 시간은?"],
+    ["내일 꼭 하고 싶은 한 가지는?", "내일의 나에게 한마디 한다면?", "내일 조심해야 할 순간은?", "내일 아침 가장 먼저 할 일은?", "내일은 무엇을 덜 하고 싶나요?", "내일 기대되는 일은?", "내일 누구에게 말을 걸어 볼까요?", "내일 공부할 것 중 가장 중요한 건?", "내일 위험한 시간에 무엇을 할까요?", "내일 몇 시에 자고 싶나요?", "내일을 위해 준비해 둘 것은?", "내일 하루를 한 단어로 정한다면?", "내일 미루지 않을 일 하나는?", "내일은 어떤 마음으로 시작할까요?", "내일 해 볼 작은 변화는?", "내일 나에게 줄 작은 보상은?", "내일 피하고 싶은 상황은?", "내일 밤 어떤 기분이면 좋겠나요?"],
+    ["요즘 가장 많이 하는 생각은?", "요즘 나를 힘들게 하는 건?", "요즘 가장 바라는 건?", "요즘 나에게 가장 중요한 사람은?", "요즘 꾸준히 하고 있는 건?", "요즘 고치고 싶은 습관은?", "요즘 나를 가장 신나게 하는 건?", "요즘 내가 달라진 점은?", "요즘 가장 궁금한 건?", "요즘 마음이 편해지는 곳은?", "요즘 나에게 필요한 말은?", "요즘 가장 아끼는 시간은?", "요즘 배우고 싶은 건?", "요즘 나를 지치게 하는 건?", "1년 뒤의 나는 어떤 모습이면 좋겠나요?", "요즘 나를 버티게 하는 건?", "요즘 가장 자주 듣는 노래는?", "디톡스를 하며 느낀 변화는?"],
+  ];
   const ICON = {
     sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>',
     moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
@@ -477,9 +522,9 @@
   let db = null;          // 저장소
   let me = null;          // { uid, email }
   let U = null;           // 내 비공개 문서
-  const S = { streaks: [], urges: [], journal: {} };   // 내 기록 (streaks = 끝난 디톡스 구간)
+  const S = { streaks: [], urges: [], journal: {}, focus: [] };   // 내 기록 (streaks = 끝난 디톡스 구간, focus = 집중 세션)
   const F = { list: [], incoming: [], outgoing: [], rank: 'ok', loaded: false, loading: false, msg: '' };
-  const ui = { tab: 'home', recTab: 'report', editLessonCat: null, calMonth: null, selDay: null, weekOff: 1, monthOff: 1, year: null, editJournal: false, mood: null, journalAll: false };
+  const ui = { tab: 'home', recTab: 'report', editLessonCat: null, calMonth: null, selDay: null, weekOff: 1, monthOff: 1, year: null, editJournal: false, score: null, jDay: 't', journalAll: false, focusSub: '', growAll: {} };
   let tickTimer = null;
 
   const userPath = () => `${C.users}/${me.uid}`;
@@ -499,6 +544,10 @@
       riskOn: true, comeback: null, monthGoals: {}, exams: [],
       attend: {}, daily: {}, achievements: {},
       comebackDone: 0, recordBreaks: 0, maxFriends: 0, wasTop1: false,
+      // v1.7.0
+      whys: [], whyAsked: false, subjects: [...DEFAULT_SUBJECTS], focus: null,
+      weekReviews: {}, monthReviews: {}, experiments: [], letters: [],
+      lessonBase: 0, lessonSeenDay: '', lessonRvCount: 0, lastBackupAt: 0,
     };
     const out = { ...d, ...u };
     out.share = { ...d.share, ...(u.share || {}) };
@@ -506,6 +555,9 @@
     out.attend = u.attend || {};
     out.daily = u.daily || {};
     out.achievements = u.achievements || {};
+    out.weekReviews = u.weekReviews || {};
+    out.monthReviews = u.monthReviews || {};
+    ['whys', 'experiments', 'letters', 'subjects'].forEach((k) => { if (!Array.isArray(out[k])) out[k] = [...d[k]]; });
     out.lessons = Array.isArray(u.lessons) ? u.lessons : [{ id: 'c1', name: '공부', items: [] }, { id: 'c2', name: '인생', items: [] }];
     // 이번 달 목표: 예전 버전(달마다 하나) → 여러 개
     const mg = {};
@@ -801,7 +853,7 @@
     };
     U = normalize(data);
     await db.put(userPath(), U);
-    S.streaks = []; S.urges = []; S.journal = {};
+    S.streaks = []; S.urges = []; S.journal = {}; S.focus = [];
     obKeep = {};
     await enterApp();
     openGuide(true);
@@ -830,13 +882,15 @@
   /* ====================== 앱 진입 ====================== */
   async function loadRecords(strict) {
     const safe = (pr) => (strict ? pr : pr.catch(() => null));
-    const [streaks, urges, journal] = await Promise.all([
+    const [streaks, urges, journal, focus] = await Promise.all([
       safe(db.list(`${userPath()}/streaks`)),
       safe(db.list(`${userPath()}/urges`)),
       safe(db.list(`${userPath()}/journal`)),
+      safe(db.list(`${userPath()}/focus`)),
     ]);
     // 다른 기기 동기화 중 읽기에 실패하면 지금 기록을 그대로 둬요 (빈 기록으로 덮지 않도록)
-    if (!streaks || !urges || !journal) return;
+    if (!streaks || !urges || !journal || !focus) return;
+    S.focus = focus.filter((f) => f && f.start && f.end).sort((a, b) => a.start - b.start);
     S.streaks = streaks.sort((a, b) => a.end - b.end);
     S.urges = urges.sort((a, b) => a.at - b.at);
     S.journal = {};
@@ -864,6 +918,8 @@
       if (!U) return;
       await loadRecords();
       if (!U.urge && !$('urge').classList.contains('hidden') && !$('urge-main').classList.contains('hidden')) hide($('urge'));
+      if (!U.focus && !$('fo-run').classList.contains('hidden')) focusUi(false);
+      renderFocus();
       $('top-name').textContent = U.nickname;
       const typing = document.activeElement && document.activeElement.matches('input, textarea');
       if (ui.tab === 'home' && !typing) renderHome();
@@ -877,7 +933,7 @@
     go('screen-app');
     $('top-name').textContent = U.nickname;
     applyTheme(currentTheme());
-    ui.calMonth = null; ui.selDay = dateKey(now()); ui.editJournal = false; ui.mood = null; ui.journalAll = false;
+    ui.calMonth = null; ui.selDay = dateKey(now()); ui.editJournal = false; ui.score = null; ui.jDay = 't'; ui.journalAll = false; ui.growAll = {};
     ui.weekOff = U.trackStart < weekStart(now()) ? 1 : 0;
     ui.monthOff = U.trackStart < monthRange(monthKey(now()))[0] ? 1 : 0;
     ui.recTab = 'report'; ui.year = null;
@@ -885,6 +941,9 @@
     switchTab('home');
     startTick();
     if (U.urge && isActive()) openUrge(true);
+    if (U.focus && (U.focus.pausedAt || focusLeft() > 0)) focusUi(true);
+    // v1.7.0: 예전 교훈은 업데이트한 날부터 다시 보기 일정이 시작돼요
+    if (!U.lessonBase) saveUser({ lessonBase: now() }).catch(() => {});
     ensureCode().then(() => savePublic(true)).catch(() => savePublic(true));
     setTimeout(() => { checkCalm(); checkGoals(); checkAchievements(); }, 600);
     // v1.6.0 밸런스 패치 안내 (한 번만)
@@ -913,6 +972,7 @@
       el.textContent = fmtLive(t - Number(el.dataset.live));
     });
     if (U.urge) renderUrge();
+    if (U.focus) { renderFocus(); if (focusDue(U.focus)) completeFocus(); }
     if (isActive()) checkProgress();
     if (Math.floor(t / 1000) % 30 === 0) checkAchievements();
     const dk = dateKey(t);
@@ -1336,11 +1396,20 @@
     const left = PLEDGE_MAX - list.length;
     return `<section class="card pledge-card">
       <div class="sec-head"><h2>오늘의 다짐</h2>${list.length ? `<span class="muted small">${kept}/${list.length} 지킴</span>` : ''}</div>
+      ${pledgeStrip()}
       ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, false)).join('')}</ul>` : ''}
       ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, true)).join('')}</ul>` : ''}
       ${left > 0 ? `<div class="pl-add">
         <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="오늘의 다짐" /><button class="btn primary" data-act="make-pledge" type="button">추가</button></div></div>` : ''}
     </section>`;
+  }
+  // 다짐 카드 위: 이번 주 한 가지 · 진행 중인 실험
+  function pledgeStrip() {
+    const one = thisWeekOne(), x = activeExp();
+    const rows = [];
+    if (one) rows.push(`<div class="strip"><span class="strip-k">이번 주 한 가지</span><span class="strip-v">${esc(one)}</span></div>`);
+    if (x && now() < x.end) rows.push(`<div class="strip exp"><span class="strip-k">실험 중 · ${expDayN(x)}/${x.days}일</span><span class="strip-v">${esc(x.text)}</span></div>`);
+    return rows.length ? `<div class="strips">${rows.join('')}</div>` : '';
   }
   async function makePledge(text) {
     text = (text || '').trim();
@@ -1394,6 +1463,7 @@
     }).join('');
     return `<section class="card goals-card">
       <div class="sec-head"><h2>이번 달 목표</h2><span class="muted small">${list.length ? `${done}/${list.length}` : `${m}월`}</span></div>
+      ${thisMonthChange() ? `<div class="strips"><div class="strip"><span class="strip-k">이번 달 다짐</span><span class="strip-v">${esc(thisMonthChange())}</span></div></div>` : ''}
       ${list.length ? `<div class="goal-list">${rows}</div>` : ''}
       ${list.length < GOAL_MAX && liveGoals(mk).filter((g) => !(GOAL_TYPES[g.type] || {}).hidden).length < Object.keys(GOAL_TYPES).filter((k) => !GOAL_TYPES[k].hidden).length ? `<button class="btn ${list.length ? 'ghost' : 'primary'} small add-goal" data-act="add-goal" type="button">${ICON.plus}목표 추가</button>` : ''}
     </section>`;
@@ -1408,9 +1478,10 @@
   function renderHome() {
     // 다시 그려도 저장 안 한 입력 내용은 남겨요
     const keep = {};
-    ['pledge-input', 'journal-input'].forEach((id) => { const el = $(id); if (el && el.value) keep[id] = el.value; });
+    ['pledge-input', 'journal-input', 'er-before', 'er-next', 'ex-good', 'ex-note', 'why-home'].forEach((id) => { const el = $(id); if (el && el.value) keep[id] = el.value; });
     renderHomeInner();
-    Object.keys(keep).forEach((id) => { const el = $(id); if (el && !el.value) el.value = keep[id]; });
+    Object.keys(keep).forEach((id) => { const el = $(id); if (el && (!el.value || id === 'er-before')) el.value = keep[id]; });
+    renderFocus();
   }
   function renderHomeInner() {
     const today = dateKey(now());
@@ -1458,7 +1529,11 @@
         </div>
         <div class="hero-actions single"><button class="btn primary start-btn" data-act="start" type="button">${ICON.play}시작하기</button></div>
       </section>`;
+    const gb = !risk ? gobiNow() : null;
+    const en = examNote();
+    const wr = weekReviewDue(), mr = monthReviewDue(), lts = lettersDue();
     $('page-home').innerHTML = `${hero}
+      ${en ? `<p class="exam-note"><span>지난 ${esc(en.name)} 때의 나</span>“${esc(en.note)}”</p>` : ''}
       ${mq ? `<section class="mine-quote"><p class="mn-text">${esc(mq)}</p></section>` : ''}
       <section class="today-quote">
         <div class="tq-body"><p class="tq-text">${esc(tq.text)}</p>${tq.by ? `<p class="tq-by" dir="ltr"><span class="tq-dash">— </span><bdi>${esc(tq.by)}</bdi></p>` : ''}</div></section>
@@ -1466,17 +1541,22 @@
       ${risk ? `<div class="risk-banner"><div class="rb-text"><b>지금은 자주 무너지는 시간이에요</b>
         <span>${hourRange(risk.from)}</span></div>
         <button class="btn small primary" data-act="urge" type="button">미리 참기</button></div>` : ''}
+      ${gb ? `<div class="risk-banner"><div class="rb-text"><b>지금은 고비 구간이에요</b>
+        <span>${gb.label} 버텼을 때 가장 많이 끝났어요</span></div>
+        <button class="btn small primary" data-act="urge" type="button">미리 참기</button></div>` : ''}
+      ${lts.length ? `<button class="report-banner letter-banner" data-act="letter-open" data-id="${esc(lts[0].id)}" type="button"><span>과거의 내가 보낸 편지가 도착했어요</span>${ICON.arrow}</button>` : ''}
       ${yr ? `<button class="report-banner" data-act="open-year" data-y="${yr}" type="button"><span>${yr}년 결산이 나왔어요</span>${ICON.arrow}</button>` : ''}
       ${showMonth ? `<button class="report-banner" data-act="open-month" type="button"><span>지난달 리포트가 나왔어요</span>${ICON.arrow}</button>` : ''}
+      ${mr ? `<button class="report-banner" data-act="month-review" data-k="${mr}" type="button"><span>${mkLabel(mr)} 회고를 써 볼까요?</span>${ICON.arrow}</button>` : ''}
       ${showReport ? `<button class="report-banner" data-act="open-report" type="button"><span>지난주 리포트가 나왔어요</span>${ICON.arrow}</button>` : ''}
+      ${wr ? `<button class="report-banner" data-act="week-review" data-k="${wr}" type="button"><span>${wr === weekKey() ? '이번 주' : '지난주'} 회고를 써 볼까요?</span>${ICON.arrow}</button>` : ''}
+      ${whyAskHtml()}
+      ${endReviewCardHtml()}
+      ${examReviewCardHtml()}
+      ${expResultCardHtml()}
+      ${focusCardHtml()}
       <div class="grid-2">${pledgeCardHtml()}${goalsCardHtml()}</div>
-      <section class="card">
-        <div class="sec-head"><h2>한 줄 일기 ${jStreak ? `<span class="streak-chip">${jStreak}일 연속</span>` : ''}</h2>${j && !ui.editJournal ? '<button class="link" data-act="edit-journal" type="button">고치기</button>' : `<span class="muted small">${md(now())}</span>`}</div>
-        ${j && !ui.editJournal ? `<div class="journal-view"><span class="m">${esc(j.mood || '📝')}</span><p>${esc(j.text)}</p></div>` : `
-          <div class="moods">${MOODS.map((m) => `<button type="button" class="mood${(ui.mood || (j && j.mood)) === m ? ' selected' : ''}" data-mood="${m}">${m}</button>`).join('')}</div>
-          <div class="inline-add"><input id="journal-input" maxlength="80" placeholder="오늘 남는 시간에 뭘 했나요?" value="${esc(j ? j.text : '')}" />
-          <button class="btn primary" data-act="save-journal" type="button">저장</button></div>`}
-      </section>`;
+      ${journalCardHtml()}`;
     renderLevelCard();
     updateHero();
   }
@@ -1577,19 +1657,23 @@
   }
 
   async function saveJournal() {
-    const text = ($('journal-input').value || '').trim();
-    const key = dateKey(now());
+    const inp = $('journal-input');
+    if (!inp) return;
+    const text = (inp.value || '').trim();
+    const yk = yesterdayOpen();
+    const key = ui.jDay === 'y' && yk ? yk : dateKey(now());
     const prev = S.journal[key];
-    const mood = ui.mood || (prev && prev.mood) || '';
+    const score = ui.score;
+    if (score == null) { toast('별점을 매겨 주세요'); return; }
     if (!text) { toast('한 줄이라도 적어주세요'); return; }
-    const entry = { text, mood, updatedAt: now() };
+    const entry = { text, score, q: (prev && prev.q) || questionFor(key), updatedAt: now() };
     try {
       await db.set(`${userPath()}/journal/${key}`, entry);
-      S.journal[key] = { id: key, ...entry };
-      ui.editJournal = false; ui.mood = null;
-      if ($('journal-input')) $('journal-input').value = '';
+      S.journal[key] = { ...(prev || {}), id: key, ...entry };
+      ui.editJournal = false; ui.score = null; ui.jDay = 't';
+      inp.value = '';
       const js = journalStreak();
-      if (!prev) { const got = await gainFixed(XP.journal); await saveUser({ xp: U.xp }); savePublic(); toast(js > 1 ? `일기 ${js}일 연속! (+${got} XP)` : `일기 저장 (+${got} XP)`); } else toast('일기를 고쳤어요');
+      if (!prev) { const got = await gainFixed(XP.journal); await saveUser({ xp: U.xp }); savePublic(); toast(js > 1 ? `${js}일 연속! (+${got} XP)` : `저장했어요 (+${got} XP)`); } else toast('고쳤어요');
       checkGoals(); checkAchievements();
     } catch (e) { toast('저장하지 못했어요'); }
     renderHome();
@@ -1602,6 +1686,7 @@
     if (hold) return;
     el.classList.add('holding');
     hold = { el, t0: now(), timer: setTimeout(() => holdDone(el), HOLD_MS) };
+    showWhyPop(true);
   }
   function holdEnd(cancelled) {
     if (!hold) return;
@@ -1609,16 +1694,20 @@
     hold.el.classList.remove('holding');
     if (cancelled && now() - hold.t0 < 450) toast('종료는 3초 동안 꾹 눌러주세요');
     hold = null;
+    showWhyPop(false);
   }
   function holdDone(el) {
     if (!hold) return;
     hold = null;
     el.classList.remove('holding');
+    showWhyPop(false);
     try { navigator.vibrate && navigator.vibrate(30); } catch (e) {}
     openEndGate();
   }
   function openEndGate() {
+    const w = randWhy();
     openSheet(`<h2>정말 종료할까요?</h2>
+      ${w ? `<p class="gate-why"><span>내가 시작한 이유</span>${esc(w)}</p>` : ''}
       <p class="muted">${U.urgeMinutes || 10}분만 참아볼까요?</p>
       <div class="sheet-actions"><button class="btn danger-ghost" data-go-end type="button">이미 무너졌어요</button>
       <button class="btn primary" data-go-urge type="button">참기 해볼게요</button></div>`,
@@ -1730,6 +1819,8 @@
   function showUrgeMain() {
     hide($('urge-pick')); show($('urge-main'));
     $('urge-activity').textContent = U.urge.activity;
+    const w = randWhy(), uw = $('urge-why');
+    if (uw) { uw.innerHTML = w ? `<span>내가 시작한 이유</span>${esc(w)}` : ''; uw.classList.toggle('hidden', !w); }
     show($('urge'));
     renderUrge();
   }
@@ -1823,10 +1914,33 @@
       friends: U.maxFriends || 0, top1: U.wasTop1 ? 1 : 0,
       attBest: (U.attend && U.attend.best) || 0, attTotal: (U.attend && U.attend.total) || 0,
       detoxDays: Math.floor(detoxIn(rf, now()) / DAY), okDays, perfectWeeks, lessons,
-      tries: S.urges.length, pledgesMade, maxDayPledges, goalsSet, moods: new Set(Object.values(S.journal).map((j) => j.mood).filter(Boolean)).size,
+      tries: S.urges.length, pledgesMade, maxDayPledges, goalsSet, scores: new Set(Object.values(S.journal).map(jScore).filter((v) => v != null)).size,
+      qAnswered: new Set(Object.values(S.journal).map((j) => j.q).filter(Boolean)).size,
+      ...focusStats(), ...growthStats(),
       quotesN: (U.quotes || []).length, examsSet: (U.exams || []).length, reportSeen: U.reportSeen ? 1 : 0,
       badgeCount: Object.keys(U.badges || {}).length, achCount: Object.keys(U.achievements || {}).length,
       stars: starsOf(U.xp), level: levelOf(U.xp), examClean: U.exams.filter((e) => e.clean).length + (U.examCleanOld || 0),
+    };
+  }
+
+  function growthStats() {
+    const wk = Object.keys(U.weekReviews).sort();
+    let run = 0, best = 0, prev = null;
+    wk.forEach((k) => { run = prev && dateKey(addDays(keyTs(prev), 7)) === k ? run + 1 : 1; best = Math.max(best, run); prev = k; });
+    const items = (U.lessons || []).flatMap((c) => c.items || []);
+    return {
+      whys: (U.whys || []).length,
+      endReviews: Object.values(U.daily || {}).filter((d) => d.review && !d.review.skip).length,
+      weekReviews: wk.length, weekRun: best,
+      oneKept: Object.values(U.weekReviews).filter((r) => r.prevKept === 'yes').length,
+      monthReviews: Object.keys(U.monthReviews).length,
+      examReviews: U.exams.filter((e) => e.review).length,
+      exps: (U.experiments || []).filter((x) => x.doneAt).length,
+      fits: fitsList().length,
+      lessonRv: U.lessonRvCount || 0,
+      learned: items.filter((i) => i.learned).length,
+      lettersWritten: (U.letters || []).length,
+      lettersOpened: (U.letters || []).filter((l) => l.openedAt).length,
     };
   }
 
@@ -1914,7 +2028,9 @@
       if (calmDone(d)) calm++;
     }
     const ach = Object.values(U.achievements || {}).filter((t) => t >= a && t < b).length;
-    return { calm, ends: ends.length, tries: tries.length, wins, longest: longestIn(a, end), detox: detoxIn(Math.max(a, U.trackStart), end), topReason: topOf(reasons), topSit: topOf(sits), weakBucket: topOf(buckets), jdays, att, pledged, kept, okDays, days, ach };
+    const study = studyIn(a, end) + (U.focus && now() >= a && now() < b ? focusRunMs() : 0);
+    const score = avgScoreIn(Math.max(a, dayStart(U.trackStart)), end);
+    return { study, score, calm, ends: ends.length, tries: tries.length, wins, longest: longestIn(a, end), detox: detoxIn(Math.max(a, U.trackStart), end), topReason: topOf(reasons), topSit: topOf(sits), weakBucket: topOf(buckets), jdays, att, pledged, kept, okDays, days, ach };
   }
 
   // 충동 추세: 줄면 좋은 쪽(초록), 늘면 빨강
@@ -1938,6 +2054,10 @@
     if (p.tries && r.tries < p.tries) notes.push(`충동이 전 주보다 <b>${p.tries - r.tries}번</b> 줄었어요`);
     if (r.calm) notes.push(`고요한 날 <b>${r.calm}일</b>`);
     if (r.pledged) notes.push(`다짐 <b>${r.kept}/${r.pledged}</b> 지킴`);
+    if (r.jdays) notes.push(`한 줄 <b>${r.jdays}일</b>`);
+    notes.push(...scoreNotes(ws, addDays(ws, 7)));
+    const wk = dateKey(ws), rv = U.weekReviews[wk];
+    const canRv = !rv && weekEligible(wk) && now() >= addDays(ws, 6);
     return `<section class="card">
       <div class="sec-head"><h2>주간 리포트</h2>
         <div class="week-nav">
@@ -1951,10 +2071,15 @@
         <div class="tile"><div class="k">디톡스한 시간</div><div class="v">${fmtDur(r.detox)}</div></div>
         <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div></div>
         <div class="tile"><div class="k">충동</div><div class="v">${r.tries}<small>번</small>${trendHtml(r.tries, p.tries)}</div></div>
-        <div class="tile calm"><div class="k">고요한 날</div><div class="v">${r.calm}<small>일</small></div></div>
-        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div></div>
+        <div class="tile"><div class="k">공부 시간</div><div class="v">${fmtDur(r.study)}</div></div>
+        <div class="tile"><div class="k">평균 별점</div><div class="v">${r.score ? `★${fmtScore(r.score.avg)}` : '-'}</div></div>
       </div>
+      ${scoreBars(ws, 7)}
       ${notes.length ? `<ul class="report-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''}
+      ${rv ? `<div class="rv-box"><div class="rv-box-h"><b>회고</b><button class="link" data-act="week-review" data-k="${wk}" type="button">고치기</button></div>
+        ${rv.prevKept ? `<p><span class="rv-k">지난주 한 가지</span>${KEPT_TXT[rv.prevKept]}</p>` : ''}
+        <p><span class="rv-k">잘한 것</span>${esc(rv.good)}</p><p><span class="rv-k">다음 주 한 가지</span>${esc(rv.next)}</p></div>`
+        : canRv ? `<button class="btn primary wide rv-btn" data-act="week-review" data-k="${wk}" type="button">이 주 회고 쓰기</button>` : ''}
     </section>`;
   }
 
@@ -1963,37 +2088,53 @@
     base.setMonth(base.getMonth() - ui.monthOff);
     const mk = monthKey(base.getTime());
     const [a, b] = monthRange(mk);
-    const pm = new Date(a); pm.setMonth(pm.getMonth() - 1);
-    const [pa, pb] = monthRange(monthKey(pm.getTime()));
-    const r = rangeReport(a, b), p = rangeReport(pa, pb);
+    const pmk = prevMonthKey(mk);
+    const [pa, pb] = monthRange(pmk);
+    const r = rangeReport(a, b);
     const m = base.getMonth() + 1;
     const gl = goalsOf(mk);
     const ts = new Date(U.trackStart);
     const canPrev = a > new Date(ts.getFullYear(), ts.getMonth(), 1).getTime();
-    const diff = r.ends - p.ends;
     const label = ui.monthOff === 0 ? `${m}월 (진행 중)` : `${base.getFullYear()}년 ${m}월`;
+    // 지난달의 나와 비교 (진행 중인 달은 지난달 같은 기간과)
+    let cmp = '';
+    if (U.trackStart < pb) {
+      const ongoing = b > now();
+      const pEnd = ongoing ? Math.min(pb, pa + (now() - a)) : pb;
+      const t = cmpHtml(periodRows(pa, pEnd, a, b, true), [ongoing ? `지난달 같은 기간` : `${mkLabel(pmk)}`, ongoing ? '이번 달' : `${m}월`]);
+      if (t.total) cmp = `<div class="me-cmp"><div class="me-cmp-h"><h3>지난달의 나</h3><span class="muted small">${t.total}개 중 <b>${t.better}개</b>가 나아졌어요</span></div>${t.html}</div>`;
+    }
     const notes = [];
     if (gl.length) notes.push(`${m}월 목표 <b>${gl.filter((s) => s.state === 'done').length}/${gl.length}</b> 달성`);
     if (r.days) notes.push(`${r.days}일 중 <b>${r.okDays}일</b>을 종료 없이 지켰어요`);
+    if (r.calm) notes.push(`고요한 날 <b>${r.calm}일</b>`);
+    if (r.pledged) notes.push(`다짐 <b>${r.kept}/${r.pledged}</b> 지킴`);
     if (r.topReason) notes.push(`가장 많이 무너진 이유는 <b>${esc(r.topReason)}</b>`);
     if (r.topSit) notes.push(`무너질 때 가장 많았던 상황은 <b>${esc(r.topSit)}</b>`);
-    if (p.tries && r.tries < p.tries) notes.push(`충동이 지난달보다 <b>${p.tries - r.tries}번</b> 줄었어요`);
+    notes.push(...scoreNotes(a, b));
     if (r.ach) notes.push(`업적 <b>${r.ach}개</b> 달성`);
+    const rv = U.monthReviews[mk];
+    const canRv = !rv && b <= now() && U.trackStart < b - 3 * DAY;
+    const nDays = Math.round((b - a) / DAY);
     return `<section class="card">
       <div class="sec-head"><h2>월간 리포트</h2>
         <div class="week-nav"><button class="icon-btn small" data-act="month-prev" type="button" aria-label="이전 달" ${canPrev ? '' : 'disabled'}>${ICON.left}</button>
           <span class="label">${label}</span>
           <button class="icon-btn small" data-act="month-next" type="button" aria-label="다음 달" ${ui.monthOff > 0 ? '' : 'disabled'}>${ICON.right}</button></div></div>
+      ${cmp}
       <div class="tiles">
-        <div class="tile"><div class="k">종료</div><div class="v">${r.ends}<small>번</small></div>
-          </div>
+        <div class="tile"><div class="k">종료</div><div class="v">${r.ends}<small>번</small></div></div>
         <div class="tile"><div class="k">디톡스한 시간</div><div class="v">${fmtDur(r.detox)}</div></div>
         <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div></div>
-        <div class="tile"><div class="k">충동</div><div class="v">${r.tries}<small>번</small>${trendHtml(r.tries, p.tries)}</div></div>
-        <div class="tile calm"><div class="k">고요한 날</div><div class="v">${r.calm}<small>일</small></div></div>
-        <div class="tile"><div class="k">다짐 지킴</div><div class="v">${r.kept}<small>/ ${r.pledged}</small></div></div>
+        <div class="tile"><div class="k">충동</div><div class="v">${r.tries}<small>번</small></div></div>
+        <div class="tile"><div class="k">공부 시간</div><div class="v">${fmtDur(r.study)}</div></div>
+        <div class="tile"><div class="k">평균 별점</div><div class="v">${r.score ? `★${fmtScore(r.score.avg)}` : '-'}</div></div>
       </div>
+      ${scoreBars(a, nDays)}
       ${notes.length ? `<ul class="report-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''}
+      ${rv ? `<div class="rv-box"><div class="rv-box-h"><b>회고</b><button class="link" data-act="month-review" data-k="${mk}" type="button">고치기</button></div>
+        <p><span class="rv-k">가장 잘한 것</span>${esc(rv.best)}</p><p><span class="rv-k">아쉬운 것</span>${esc(rv.regret)}</p><p><span class="rv-k">다음 달에 바꿀 것</span>${esc(rv.change)}</p></div>`
+        : canRv ? `<button class="btn primary wide rv-btn" data-act="month-review" data-k="${mk}" type="button">${m}월 회고 쓰기</button>` : ''}
     </section>`;
   }
 
@@ -2013,9 +2154,12 @@
       const ma = new Date(y, m, 1).getTime(), mb = new Date(y, m + 1, 1).getTime();
       if (ma > now() || mb <= U.trackStart) continue;
       const rr = rangeReport(ma, mb);
-      months.push({ m: m + 1, ok: rr.days ? rr.okDays / rr.days : 0, ends: rr.ends });
+      months.push({ m: m + 1, ok: rr.days ? rr.okDays / rr.days : 0, ends: rr.ends, sc: rr.score });
     }
     const bestMonth = months.length ? months.reduce((p, c) => (c.ok > p.ok ? c : p)) : null;
+    const scored = months.filter((x) => x.sc && x.sc.n >= 3);
+    const bestScore = scored.length ? scored.reduce((p, c) => (c.sc.avg > p.sc.avg ? c : p)) : null;
+    const changes = Object.keys(U.monthReviews).filter((mk) => mk.startsWith(y + '-')).sort().map((mk) => ({ mk, t: U.monthReviews[mk].change })).filter((x) => x.t);
     const goalsDone = Object.keys(U.monthGoals).filter((mk) => mk.startsWith(y + '-')).reduce((s, mk) => s + goalsOf(mk).filter((x) => x.state === 'done').length, 0);
     const canPrev = new Date(U.trackStart).getFullYear() < y;
     return `<section class="card year-card">
@@ -2027,26 +2171,30 @@
         <div class="tile"><div class="k">가장 길게 버틴 시간</div><div class="v">${fmtDur(r.longest)}</div></div>
         <div class="tile"><div class="k">종료 없이 지킨 날</div><div class="v">${r.okDays}<small>일</small></div></div>
         <div class="tile calm"><div class="k">고요한 날</div><div class="v">${r.calm}<small>일</small></div></div>
-        <div class="tile"><div class="k">다짐 지킴</div><div class="v">${r.kept}<small>개</small></div></div>
-        <div class="tile"><div class="k">새로 달성한 업적</div><div class="v">${r.ach}<small>개</small></div></div>
-        <div class="tile"><div class="k">일기 쓴 날</div><div class="v">${r.jdays}<small>일</small></div></div>
+        <div class="tile"><div class="k">공부 시간</div><div class="v">${fmtDur(r.study)}</div></div>
+        <div class="tile"><div class="k">평균 별점</div><div class="v">${r.score ? `★${fmtScore(r.score.avg)}` : '-'}</div></div>
+        <div class="tile"><div class="k">한 줄 쓴 날</div><div class="v">${r.jdays}<small>일</small></div></div>
       </div>
       <ul class="report-notes">
         ${bestMonth ? `<li>가장 잘 버틴 달은 <b>${bestMonth.m}월</b> (종료 ${bestMonth.ends}번)</li>` : ''}
+        ${bestScore ? `<li>별점이 가장 높았던 달은 <b>${bestScore.m}월</b> (★${fmtScore(bestScore.sc.avg)})</li>` : ''}
+        ${r.kept ? `<li>다짐 <b>${r.kept}개</b>를 지켰어요</li>` : ''}
+        ${r.ach ? `<li>업적 <b>${r.ach}개</b>를 새로 달성했어요</li>` : ''}
         ${r.topReason ? `<li>올해 가장 큰 적은 <b>${esc(r.topReason)}</b>였어요</li>` : ''}
         ${r.topSit ? `<li>무너질 때 가장 많았던 상황은 <b>${esc(r.topSit)}</b></li>` : ''}
         <li>${ongoing ? '남은 날도 지금처럼!' : '한 해 동안 수고 많았어요. 내년에도 함께 가요.'}</li>
       </ul>
+      ${changes.length ? `<h3 class="yr-tl-h">한 해 동안 바꾸려 한 것</h3><ol class="yr-tl">${changes.map((x) => `<li><span class="num">${Number(x.mk.split('-')[1]) % 12 + 1}월</span>${esc(x.t)}</li>`).join('')}</ol>` : ''}
     </section>`;
   }
 
   /* ====================== 기록 화면 ====================== */
   function renderRecords() {
     const el = $('page-records');
-    const tabs = [['report', '리포트'], ['calendar', '달력'], ['stats', '통계'], ['achieve', '업적'], ['lessons', '교훈']];
-    const body = ui.recTab === 'lessons' ? lessonsHtml()
+    const tabs = [['report', '리포트'], ['calendar', '달력'], ['stats', '통계'], ['achieve', '업적'], ['lessons', '교훈'], ['growth', '성장']];
+    const body = ui.recTab === 'growth' ? growthHtml() : ui.recTab === 'lessons' ? lessonsHtml()
       : ui.recTab === 'calendar' ? calendarCard() + journalCard()
-      : ui.recTab === 'stats' ? statsCard() + badgesCard()
+      : ui.recTab === 'stats' ? statsCard() + patternCard() + badgesCard()
         : ui.recTab === 'achieve' ? achCard()
           : reportCard() + monthCard() + yearCard();
     el.innerHTML = `<div class="seg rec-tabs">${tabs.map(([k, l]) => `<button class="seg-btn${ui.recTab === k ? ' active' : ''}" data-act="rec-tab" data-k="${k}" type="button">${l}</button>`).join('')}</div>${body}`;
@@ -2072,8 +2220,8 @@
             <div class="row-acts"><button class="icon-btn small" data-act="ls-rename" data-cat="${esc(c.id)}" type="button" aria-label="이름 바꾸기">${ICON.edit}</button>
             <button class="icon-btn small" data-act="ls-del-cat" data-cat="${esc(c.id)}" type="button" aria-label="종류 지우기">${ICON.x}</button></div>`}</div>
         ${c.items.length ? `<ol class="ls-list" data-cat="${esc(c.id)}">${c.items.map((it, i) => `
-          <li class="ls-item" data-id="${esc(it.id)}"><span class="ls-num">${i + 1}</span>
-            <button class="ls-text" data-act="ls-edit" data-cat="${esc(c.id)}" data-id="${esc(it.id)}" type="button">${esc(it.text)}</button>
+          <li class="ls-item${it.learned ? ' learned' : ''}" data-id="${esc(it.id)}"><span class="ls-num">${i + 1}</span>
+            <button class="ls-text" data-act="ls-edit" data-cat="${esc(c.id)}" data-id="${esc(it.id)}" type="button">${esc(it.text)}${it.learned ? `<span class="ls-learned">${ICON.check}익힘</span>` : ''}</button>
             <span class="ls-handle" aria-label="끌어서 순서 바꾸기" role="button" tabindex="-1">${ICON.grip}</span></li>`).join('')}</ol>` : ''}
         ${c.items.length < LESSON_MAX ? `<div class="inline-add"><input id="ls-new-${esc(c.id)}" data-cat="${esc(c.id)}" class="ls-new" maxlength="80" placeholder="새 교훈" /><button class="btn" data-act="ls-add" data-cat="${esc(c.id)}" type="button">추가</button></div>` : ''}
       </section>`).join('')}
@@ -2091,7 +2239,7 @@
     const ls = cloneLessons();
     const c = ls.find((x) => x.id === catId);
     if (!c) return;
-    c.items.push({ id: 'i' + uid6(), text: v });
+    c.items.push({ id: 'i' + uid6(), text: v, at: now(), rv: 0 });
     saveLessons(ls).then(() => { const n = $('ls-new-' + catId); if (n) n.focus(); });
   }
   function lessonAddCat() {
@@ -2105,8 +2253,16 @@
     if (!it) return;
     openSheet(`<h2>${esc(c.name)}</h2>
       <textarea id="ls-edit-input" maxlength="80" rows="3">${esc(it.text)}</textarea>
+      ${it.learned ? '<button class="link" data-unlearn type="button" style="margin-top:8px">익힘 풀고 다시 보기</button>' : ''}
       <div class="sheet-actions"><button class="btn danger-ghost" data-del type="button">지우기</button><button class="btn primary" data-ok type="button">저장</button></div>`,
     (el) => {
+      const ul = el.querySelector('[data-unlearn]');
+      if (ul) ul.onclick = () => {
+        closeSheet();
+        const ls = cloneLessons(); const cc = ls.find((x) => x.id === catId);
+        cc.items = cc.items.map((x) => (x.id === id ? { ...x, learned: null, rv: 0, at: now() } : x));
+        saveLessons(ls, '다시 보기로 돌렸어요');
+      };
       el.querySelector('[data-del]').onclick = () => {
         closeSheet();
         const ls = cloneLessons(); const cc = ls.find((x) => x.id === catId);
@@ -2223,13 +2379,16 @@
     const evs = [
       ...info.ends.map((r) => ({ t: r.end, html: `<span class="tag r">종료</span><span>${esc(r.reason)} · ${fmtDur(r.durationMs)} 버팀${r.situations && r.situations.length ? ` · ${r.situations.map(esc).join(', ')}` : ''}${r.memo ? ` · ${esc(r.memo)}` : ''}</span>` })),
       ...info.urges.map((u) => ({ t: u.at, html: `<span class="tag ${u.result === 'win' ? 'w' : 'l'}">${u.result === 'win' ? '참기 성공' : '참기 실패'}</span><span>${u.target ? `${esc(u.target)} · ` : ''}${esc(u.activity)}</span>` })),
+      ...S.focus.filter((f) => f.start >= info.d0 && f.start < info.d1).map((f) => ({ t: f.start, html: `<span class="tag f">집중</span><span>${f.subject ? `${esc(f.subject)} · ` : ''}${fmtDur(f.ms)}${f.done ? '' : ' (중간에 멈춤)'}</span>` })),
     ].sort((a, b) => a.t - b.t);
+    const rv = dailyOf(key).review;
     const status = info.status === 'before' ? '기록 시작 전' : info.status === 'reset' ? `종료 ${info.ends.length}번` : info.status === 'off' ? '쉰 날' : info.status === 'calm' ? '고요한 날' : info.urges.length ? '참기로 버틴 날' : '지킨 날';
     return `<div class="day-detail">
       <h3>${dd.getMonth() + 1}월 ${dd.getDate()}일 (${DOW[dd.getDay()]}) · <span class="muted">${status}</span></h3>
-      ${evs.length ? evs.map((e) => `<div class="ev"><span class="t">${hm(e.t)}</span>${e.html}</div>`).join('') : '<p class="empty">이날은 종료·참기 기록이 없어요.</p>'}
+      ${evs.length ? evs.map((e) => `<div class="ev"><span class="t">${hm(e.t)}</span>${e.html}</div>`).join('') : '<p class="empty">이날은 종료·참기·집중 기록이 없어요.</p>'}
       ${ps.length ? `<div class="ev"><span class="t">다짐</span><span>${ps.map((p) => `${p.check === 'yes' ? '✓' : p.check === 'no' ? '✗' : '·'} ${esc(p.text)}`).join(' &nbsp; ')}</span></div>` : ''}
-      ${j ? `<div class="ev"><span class="t">일기</span><span>${esc(j.mood || '')} ${esc(j.text)}</span></div>` : ''}
+      ${rv && !rv.skip ? `<div class="ev"><span class="t">돌아보기</span><span>${rv.before ? `${esc(rv.before)} → ` : ''}${esc(rv.next)}</span></div>` : ''}
+      ${j ? `<div class="ev"><span class="t">한 줄</span><span class="ev-j">${jScore(j) != null ? starsHtml(jScore(j), 's-sm') : ''}${j.q ? `<small class="muted">${esc(j.q)}</small>` : ''}${esc(j.text)}</span></div>` : ''}
     </div>`;
   }
 
@@ -2238,15 +2397,8 @@
     const avg = done.length ? done.reduce((a, s) => a + s.durationMs, 0) / done.length : null;
     const today0 = dayStart(now());
     const u7 = urgesIn(addDays(today0, -6), now()).length, u14 = urgesIn(addDays(today0, -13), addDays(today0, -6)).length;
-    const reasons = {}; done.forEach((s) => { reasons[s.reason] = (reasons[s.reason] || 0) + 1; });
-    const rList = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
-    const bCounts = BUCKETS.map(() => 0); done.forEach((s) => { bCounts[bucketOf(s.end)]++; });
-    const maxR = Math.max(1, ...rList.map((x) => x[1])), maxB = Math.max(1, ...bCounts);
-    const sits = {}; done.forEach((s) => (s.situations || []).forEach((x) => { sits[x] = (sits[x] || 0) + 1; }));
-    const sList = Object.entries(sits).sort((a, b) => b[1] - a[1]);
-    const maxS = Math.max(1, ...sList.map((x) => x[1]));
     const rw = riskiestWindow();
-    const bar = (name, n, max) => `<div class="hbar"><span class="name">${esc(name)}</span><span class="track"><i style="width:${(n / max) * 100}%"></i></span><span class="n">${n}</span></div>`;
+    const sc = avgScoreIn(dayStart(U.trackStart), now());
     return `<section class="card">
       <h2 style="margin-bottom:12px">통계</h2>
       <div class="tiles">
@@ -2256,15 +2408,9 @@
         <div class="tile calm"><div class="k">고요한 날</div><div class="v">${calmIn(U.trackStart, now())}<small>일</small></div></div>
         <div class="tile"><div class="k">최근 7일 충동</div><div class="v">${u7}<small>번</small>${trendHtml(u7, u14)}</div></div>
         <div class="tile"><div class="k">위험 시간대</div><div class="v">${rw ? hourRange(rw.from) : '-'}</div></div>
-        <div class="tile"><div class="k">일기 연속</div><div class="v">${journalStreak()}<small>일</small></div></div>
-      </div>
-      <div class="grid-2" style="margin-top:18px">
-        <div><h3 style="margin-bottom:10px">종료 이유</h3>
-          ${rList.length ? `<div class="hbars">${rList.map(([k, n]) => bar(k, n, maxR)).join('')}</div>` : '<p class="empty">아직 종료한 적이 없어요.</p>'}</div>
-        <div><h3 style="margin-bottom:10px">종료한 시간대</h3>
-          ${done.length ? `<div class="hbars">${BUCKETS.map((b, i) => bar(b.label, bCounts[i], maxB)).join('')}</div>` : '<p class="empty">기록이 쌓이면 보여드릴게요.</p>'}</div>
-        <div><h3 style="margin-bottom:10px">무너질 때 상황</h3>
-          ${sList.length ? `<div class="hbars">${sList.map(([k, n]) => bar(k, n, maxS)).join('')}</div>` : '<p class="empty">종료할 때 상황을 고르면 여기에 모여요.</p>'}</div>
+        <div class="tile"><div class="k">누적 공부 시간</div><div class="v">${fmtDur(studyIn(0, now() + DAY) + focusRunMs())}</div></div>
+        <div class="tile"><div class="k">평균 별점</div><div class="v">${sc ? `★${fmtScore(sc.avg)}` : '-'}</div></div>
+        <div class="tile"><div class="k">한 줄 연속</div><div class="v">${journalStreak()}<small>일</small></div></div>
       </div>
     </section>`;
   }
@@ -2274,12 +2420,12 @@
     const shown = ui.journalAll ? keys : keys.slice(0, 7);
     const st = journalStreak();
     return `<section class="card">
-      <div class="sec-head"><h2>일기 모아보기</h2><span class="muted small">${keys.length}일</span></div>
+      <div class="sec-head"><h2>한 줄 모아보기</h2><span class="muted small">${keys.length}일</span></div>
       ${keys.length ? `<div class="journal-list">${shown.map((k) => {
-        const d = new Date(keyTs(k)), j = S.journal[k];
-        return `<div class="jl"><span class="jd">${d.getMonth() + 1}.${d.getDate()} <small>${DOW[d.getDay()]}</small></span><span class="jm">${esc(j.mood || '📝')}</span><span class="jt">${esc(j.text)}</span></div>`;
+        const d = new Date(keyTs(k)), j = S.journal[k], v = jScore(j);
+        return `<div class="jl"><span class="jd">${d.getMonth() + 1}.${d.getDate()} <small>${DOW[d.getDay()]}</small></span><span class="jm">${v != null ? `${starsHtml(v, 's-sm')}` : ''}</span><span class="jt">${j.q ? `<small class="muted jq">${esc(j.q)}</small>` : ''}${esc(j.text)}</span></div>`;
       }).join('')}</div>
-      ${keys.length > 7 ? `<button class="link" data-act="journal-all" type="button" style="margin-top:8px">${ui.journalAll ? '접기' : `전체 ${keys.length}개 보기`}</button>` : ''}` : '<p class="empty">홈에서 한 줄 일기를 쓰면 여기에 모여요.</p>'}
+      ${keys.length > 7 ? `<button class="link" data-act="journal-all" type="button" style="margin-top:8px">${ui.journalAll ? '접기' : `전체 ${keys.length}개 보기`}</button>` : ''}` : '<p class="empty">홈에서 오늘 한 줄을 쓰면 여기에 모여요.</p>'}
     </section>`;
   }
 
@@ -2457,6 +2603,12 @@
       </section>
 
       <section class="card set-sec">
+        <h2>집중 과목</h2>
+        <div class="chips">${U.subjects.map((t, i) => `<span class="chip">${esc(t)}<button class="x" data-act="del-subject" data-i="${i}" type="button" aria-label="${esc(t)} 삭제">×</button></span>`).join('')}</div>
+        <div class="inline-add"><input id="set-subject" maxlength="10" placeholder="새 과목" /><button class="btn" data-act="add-subject" type="button">추가</button></div>
+      </section>
+
+      <section class="card set-sec">
         <h2>참기</h2>
         <div><div class="lbl" style="margin-bottom:8px;font-weight:650">참기 시간</div>
           <div class="seg">${[5, 10, 15].map((m) => `<button class="seg-btn${U.urgeMinutes === m ? ' active' : ''}" data-act="urge-min" data-m="${m}" type="button">${m}분</button>`).join('')}</div></div>
@@ -2494,6 +2646,13 @@
       </section>
 
       <section class="card set-sec">
+        <h2>기록 백업</h2>
+        <div class="set-row"><div><div class="lbl">마지막 백업</div></div><span class="muted">${U.lastBackupAt ? (dayStart(now()) - dayStart(U.lastBackupAt) >= DAY ? `${Math.round((dayStart(now()) - dayStart(U.lastBackupAt)) / DAY)}일 전` : '오늘') : '아직 없음'}</span></div>
+        <div class="danger-zone"><button class="btn primary" data-act="backup-export" type="button">내보내기</button>
+          <button class="btn" data-act="backup-import" type="button">가져오기</button></div>
+      </section>
+
+      <section class="card set-sec">
         <h2>계정</h2>
         <div class="danger-zone"><button class="btn" data-act="logout" type="button">로그아웃</button>
           <button class="btn danger-ghost" data-act="wipe-detox" type="button">디톡스 기록 지우기</button>
@@ -2515,6 +2674,9 @@
     ['☾', '고요한 날', '종료도 충동도 없는 날. 다음 날 보너스를 받아요.'],
     ['■', '종료', '무너졌다면 솔직하게 3초 꾹. 보상은 한 단계만 내려가요.'],
     ['✓', '다짐 · 목표', '오늘의 다짐과 이번 달 목표를 정하고 지켜요.'],
+    ['◷', '집중', '25분·50분 공부 타이머. 끝까지 하면 경험치를 받아요.'],
+    ['✎', '오늘 한 줄', '하루에 별점을 매기고 질문에 한 줄로 답해요.'],
+    ['↺', '회고 · 성장', '주간·월간 회고, 실험, 미래의 나에게 편지. 기록 › 성장에 모여요.'],
     ['★', '보상', '버틴 시간이 가장 큰 보상이에요. 오래 버티면 디톡스 보상이 커지고, 시험 기간엔 1.5배.'],
     ['☺', '친구', '친구 코드로 추가하고 이번 주 지킨 날을 비교해요.'],
   ];
@@ -2528,7 +2690,7 @@
   /* ---------- 디톡스 기록만 지우기 (설정은 그대로) ---------- */
   function openWipeDetox() {
     openSheet(`<h2>디톡스 기록을 지울까요?</h2>
-      <p class="muted">타이머, 종료·참기 기록, 일기, 다짐, 목표, 출석, 경험치, 배지, 업적이 지워지고 지금부터 다시 시작해요. 설정과 교훈은 그대로 남아요. <b>되돌릴 수 없어요.</b></p>
+      <p class="muted">타이머, 종료·참기·집중 기록, 한 줄, 다짐, 목표, 회고, 실험, 출석, 경험치, 배지, 업적이 지워지고 지금부터 다시 시작해요. 설정, 교훈, 시작한 이유, 아직 안 열린 편지는 그대로 남아요. <b>되돌릴 수 없어요.</b></p>
       <p class="label">확인을 위해 <b>삭제</b>라고 적어주세요</p>
       <input id="wipe-input" placeholder="삭제" autocomplete="off" />
       <p class="form-err" id="wipe-err"></p>
@@ -2546,20 +2708,23 @@
   }
   async function wipeDetox() {
     const base = userPath();
-    for (const col of ['streaks', 'urges', 'journal']) {
+    for (const col of ['streaks', 'urges', 'journal', 'focus']) {
       const docs = await db.list(`${base}/${col}`);
       await Promise.all(docs.map((d) => db.del(`${base}/${col}/${d.id}`)));
     }
     const t = now();
-    const keepKeys = ['nickname', 'gender', 'targets', 'activities', 'urgeMinutes', 'quotes', 'share', 'riskOn', 'friendCode', 'codeOk', 'lessons', 'createdAt'];
-    const data = { onboarded: true, startAt: t, trackStart: t, rewardFrom: t, endedAt: null, lastDur: 0, bestMs: 0, xp: 0, xpHours: 0, badges: {}, urgeWins: 0, urge: null, multFloor: 0, balanceSeen: '1.6.0' };
+    const keepKeys = ['nickname', 'gender', 'targets', 'activities', 'urgeMinutes', 'quotes', 'share', 'riskOn', 'friendCode', 'codeOk', 'lessons', 'createdAt', 'whys', 'whyAsked', 'subjects', 'lessonBase', 'lastBackupAt'];
+    const data = { onboarded: true, startAt: t, trackStart: t, rewardFrom: t, endedAt: null, lastDur: 0, bestMs: 0, xp: 0, xpHours: 0, badges: {}, urgeWins: 0, urge: null, multFloor: 0, balanceSeen: '1.6.0', focus: null };
     keepKeys.forEach((k) => { if (U[k] !== undefined) data[k] = U[k]; });
+    // 아직 안 열린 편지는 남겨요
+    data.letters = (U.letters || []).filter((l) => !l.openedAt);
     data.exams = U.exams.map((e) => { const x = { ...e }; delete x.evaluated; delete x.clean; return x; });
     await db.put(base, data);
     hide($('urge')); hide($('modal-reset'));
     celQueue.length = 0; celOn = false; hide($('celebrate'));
     U = normalize(data);
-    S.streaks = []; S.urges = []; S.journal = {};
+    S.streaks = []; S.urges = []; S.journal = {}; S.focus = [];
+    focusUi(false);
     savePublic(true);
     ui.weekOff = 0; ui.monthOff = 0; ui.year = null; ui.calMonth = null;
     switchTab('home');
@@ -2588,7 +2753,7 @@
   }
   async function wipeAll() {
     const base = userPath();
-    for (const col of ['streaks', 'urges', 'journal']) {
+    for (const col of ['streaks', 'urges', 'journal', 'focus']) {
       const docs = await db.list(`${base}/${col}`);
       await Promise.all(docs.map((d) => db.del(`${base}/${col}/${d.id}`)));
     }
@@ -2599,11 +2764,1036 @@
     clearInterval(tickTimer);
     hide($('urge')); hide($('modal-reset'));
     celQueue.length = 0; celOn = false; hide($('celebrate'));
-    U = null; S.streaks = []; S.urges = []; S.journal = {};
+    U = null; S.streaks = []; S.urges = []; S.journal = {}; S.focus = [];
+    focusUi(false);
     obKeep = { friendCode: keep.friendCode, codeOk: keep.codeOk };
     resetOnboarding(keep.nickname);
     go('screen-onboard'); obShow();
     toast('기록을 모두 지웠어요. 처음부터 시작해요');
+  }
+
+  /* ====================== v1.7.0 공통 계산 ====================== */
+  // 별점: 0~5, 0.5 단위 (예전 기분 이모지는 별점으로 바꿔서 읽어요)
+  function jScore(j) {
+    if (!j) return null;
+    if (typeof j.score === 'number') return j.score;
+    return j.mood && MOOD_SCORE[j.mood] != null ? MOOD_SCORE[j.mood] : null;
+  }
+  const scoreOf = (k) => jScore(S.journal[k]);
+  function avgScoreIn(a, b, pred) {
+    let n = 0, sum = 0;
+    for (let d = dayStart(a); d < b; d = addDays(d, 1)) {
+      const v = scoreOf(dateKey(d));
+      if (v == null || (pred && !pred(d))) continue;
+      n++; sum += v;
+    }
+    return n ? { avg: sum / n, n } : null;
+  }
+  const fmtScore = (v) => (v == null ? '-' : (Math.round(v * 10) / 10).toFixed(1));
+  const fmtStar = (v) => (v % 1 ? v.toFixed(1) : String(v));
+  const STAR_PATH = 'M12 2.4l2.9 6.1 6.7.8-5 4.6 1.3 6.6L12 17.2l-5.9 3.3 1.3-6.6-5-4.6 6.7-.8z';
+  function starsHtml(v, cls = '') {
+    let h = '';
+    for (let i = 0; i < 5; i++) {
+      const f = Math.max(0, Math.min(1, (v || 0) - i));
+      h += `<span class="st"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg><span class="st-f" style="width:${f * 100}%"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg></span></span>`;
+    }
+    return `<span class="stars ${cls}" role="img" aria-label="별점 ${v == null ? '없음' : fmtStar(v)}">${h}</span>`;
+  }
+  function starFromX(el, x) {
+    const st = el.querySelectorAll('.st');
+    if (st.length < 5) return 0;
+    const r0 = st[0].getBoundingClientRect(), r4 = st[4].getBoundingClientRect();
+    if (x < r0.left + 1) return 0;
+    const w = (r4.right - r0.left) / 5;
+    return Math.max(0.5, Math.min(5, Math.ceil(((x - r0.left) / w) * 2) / 2));
+  }
+  function setScore(v) {
+    ui.score = v;
+    const el = $('star-in');
+    if (!el) return;
+    const old = el.querySelector('.stars');
+    if (old) old.outerHTML = starsHtml(v, 's-lg');
+    el.setAttribute('aria-valuenow', v == null ? 0 : v);
+    el.setAttribute('aria-valuetext', v == null ? '별점 없음' : `${fmtStar(v)}점`);
+    const t = $('st-val'); if (t) t.textContent = v == null ? '' : fmtStar(v);
+  }
+
+  // 오늘 한 줄 질문 (갈래와 순서를 날마다 바꿔요)
+  const Q_BASE = keyTs('2020-01-06');
+  function questionFor(k) {
+    const n = Math.round((keyTs(k) - Q_BASE) / DAY);
+    const alt = dailyOf(k).qAlt ? 1 : 0;
+    const cat = (((n + alt * 2) % 5) + 5) % 5;
+    const idx = (((Math.floor(n / 5) + alt * 7) % 18) + 18) % 18;
+    return QUESTIONS[cat][idx];
+  }
+
+  /* ---------- 집중 타이머 ---------- */
+  function studyIn(a, b) {
+    let t = 0;
+    S.focus.forEach((f) => {
+      const w = f.end - f.start;
+      if (w <= 0) return;
+      const o = overlap(f.start, f.end, a, b);
+      if (o > 0) t += (f.ms || 0) * Math.min(1, o / w);
+    });
+    return t;
+  }
+  function focusElapsed(f = U && U.focus, t = now()) {
+    if (!f) return 0;
+    return Math.max(0, (f.pausedAt || t) - f.startAt - (f.pausedMs || 0));
+  }
+  const focusLeft = (f = U && U.focus) => (f ? Math.max(0, f.mins * MIN - focusElapsed(f)) : 0);
+  const focusRunMs = () => (U && U.focus ? Math.min(U.focus.mins * MIN, focusElapsed()) : 0);
+  const studyToday = () => studyIn(dayStart(now()), now()) + focusRunMs();
+  const examOnAt = (ts) => U.exams.some((e) => examStatus(e, ts).state === 'on');
+
+  let audioCtx = null;
+  function unlockAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtx) audioCtx = new AC();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) {}
+  }
+  function chime() {
+    try { navigator.vibrate && navigator.vibrate([60, 80, 60]); } catch (e) {}
+    try {
+      if (!audioCtx) return;
+      const t0 = audioCtx.currentTime;
+      [[660, 0], [880, 0.18], [1320, 0.36]].forEach(([fq, d]) => {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = fq;
+        g.gain.setValueAtTime(0.0001, t0 + d);
+        g.gain.exponentialRampToValueAtTime(0.22, t0 + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.5);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t0 + d); o.stop(t0 + d + 0.55);
+      });
+    } catch (e) {}
+  }
+
+  const BASE_TITLE = 'FocusFill';
+  // 이 창의 이름표: 다른 기기에서 시작한 집중은 그 기기가 먼저 끝내도록 잠깐 기다려요 (경험치 두 번 받지 않게)
+  const DEV_ID = uid6();
+  const focusDue = (f) => !f.pausedAt && focusLeft(f) <= 0 && (f.dev === DEV_ID || !f.dev || now() - (f.startAt + f.mins * MIN + (f.pausedMs || 0)) > 20000);
+  function renderFocus() {
+    const f = U && U.focus;
+    if (!f) { if (document.title !== BASE_TITLE) document.title = BASE_TITLE; return; }
+    const left = focusLeft(f), secs = Math.ceil(left / 1000);
+    const txt = `${pad(Math.floor(secs / 60))}:${pad(secs % 60)}`;
+    const pct = ((f.mins * MIN - left) / (f.mins * MIN)) * 100;
+    ['fo-clock', 'fc-clock'].forEach((id) => { const el = $(id); if (el) el.textContent = txt; });
+    ['fo-bar', 'fc-bar'].forEach((id) => { const el = $(id); if (el) el.style.width = pct.toFixed(1) + '%'; });
+    const pb = $('fo-pause'); if (pb) pb.textContent = f.pausedAt ? '계속' : '일시정지';
+    const o = $('focus'); if (o) o.classList.toggle('paused', !!f.pausedAt);
+    const td = document.querySelector('.fc-today'); if (td) td.textContent = fmtDur(studyToday());
+    document.title = `${f.pausedAt ? '⏸' : '⏱'} ${txt} · FocusFill`;
+  }
+  function focusUi(open) {
+    const o = $('focus');
+    if (!o) return;
+    if (!open || !U || !U.focus) { hide(o); renderFocus(); return; }
+    show($('fo-run')); hide($('fo-done'));
+    $('fo-sub').textContent = `${U.focus.subject ? U.focus.subject + ' · ' : ''}${U.focus.mins}분 집중`;
+    show(o); renderFocus();
+  }
+  async function startFocus(mins) {
+    if (!U) return;
+    if (U.focus) return focusUi(true);
+    mins = Math.round(mins);
+    if (!(mins >= 5 && mins <= 180)) return toast('5분에서 180분 사이로 정해 주세요');
+    unlockAudio();
+    const f = { id: 'f' + uid6(), dev: DEV_ID, startAt: now(), mins, pausedMs: 0, pausedAt: null, subject: U.subjects.includes(ui.focusSub) ? ui.focusSub : '' };
+    U.focus = f;
+    focusUi(true);
+    if (ui.tab === 'home') renderHome();
+    try { await saveUser({ focus: f }); } catch (e) {}
+  }
+  async function toggleFocusPause() {
+    const f = U && U.focus;
+    if (!f) return;
+    const nf = { ...f };
+    if (f.pausedAt) { nf.pausedMs = (f.pausedMs || 0) + Math.max(0, now() - f.pausedAt); nf.pausedAt = null; unlockAudio(); }
+    else nf.pausedAt = now();
+    U.focus = nf;
+    renderFocus();
+    if (ui.tab === 'home') renderHome();
+    try { await saveUser({ focus: nf }); } catch (e) {}
+  }
+  function stopFocus() {
+    const f = U && U.focus;
+    if (!f) return;
+    const el = focusElapsed(f);
+    const enough = el >= FOCUS_MIN_REC * MIN;
+    openSheet(`<h2>집중을 그만둘까요?</h2>
+      <p class="muted">${enough ? `지금까지 ${fmtDur(el)}은 공부 시간으로 기록돼요. 경험치는 끝까지 했을 때만 받아요.` : `${FOCUS_MIN_REC}분이 안 돼서 기록되지 않아요.`}</p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">계속하기</button><button class="btn danger" data-ok type="button">그만두기</button></div>`,
+    (b) => {
+      b.querySelector('[data-close]').onclick = closeSheet;
+      b.querySelector('[data-ok]').onclick = () => { closeSheet(); endFocusEarly(enough); };
+    });
+  }
+  async function endFocusEarly(record) {
+    const f = U && U.focus;
+    if (!f) return;
+    const el = focusElapsed(f);
+    U.focus = null;
+    focusUi(false);
+    if (record) {
+      const rec = { start: f.startAt, end: now(), ms: el, mins: f.mins, subject: f.subject || '', done: false, xp: 0 };
+      try { await db.put(`${userPath()}/focus/${f.id}`, rec); if (!S.focus.some((x) => x.id === f.id)) S.focus.push({ id: f.id, ...rec }); } catch (e) {}
+    }
+    try { await saveUser({ focus: null }); } catch (e) {}
+    toast(record ? `${fmtDur(el)} 기록했어요` : '집중을 그만뒀어요');
+    if (ui.tab === 'home') renderHome();
+    checkAchievements();
+  }
+  let focusBusy = false;
+  async function completeFocus() {
+    const f = U && U.focus;
+    if (!f || focusBusy) return;
+    focusBusy = true;
+    try {
+      const end = f.startAt + f.mins * MIN + (f.pausedMs || 0);
+      const k = dateKey(end);
+      const late = now() - end > 2 * MIN;   // 앱을 닫아 둔 사이에 끝난 경우
+      const rec = { start: f.startAt, end, ms: f.mins * MIN, mins: f.mins, subject: f.subject || '', done: true, xp: 0 };
+      let got = 0;
+      if (!S.focus.some((x) => x.id === f.id)) {
+        const used = dailyOf(k).focusXpBase || 0;
+        const base = Math.max(0, Math.min(Math.floor(f.mins / FOCUS_UNIT) * XP.focus, FOCUS_DAY_MAX - used));
+        got = Math.round(base * (examOnAt(end) ? EXAM_X : 1));
+        rec.xp = got;
+        await db.put(`${userPath()}/focus/${f.id}`, rec);
+        S.focus.push({ id: f.id, ...rec });
+        S.focus.sort((a, b) => a.start - b.start);
+        if (got) await addXp(got);
+        const daily = { ...(U.daily || {}) };
+        daily[k] = { ...(daily[k] || {}), focusXpBase: used + base };
+        U.focus = null;
+        await saveUser({ focus: null, daily, xp: U.xp });
+      } else { U.focus = null; await saveUser({ focus: null }); }
+      savePublic();
+      const o = $('focus');
+      if (!late) chime();
+      if (o && !o.classList.contains('hidden') && !late) {
+        hide($('fo-run')); show($('fo-done'));
+        $('fo-done-sub').textContent = `${rec.subject ? rec.subject + ' · ' : ''}${rec.mins}분 동안 집중했어요.`;
+        $('fo-done-xp').textContent = got ? `+${got} XP` : '';
+      } else { hide(o); toast(`집중 ${rec.mins}분 완료!${got ? ` (+${got} XP)` : ''}`); }
+      renderFocus();
+      if (ui.tab === 'home') renderHome(); else renderLevelCard();
+      checkAchievements();
+    } catch (e) {} finally { focusBusy = false; }
+  }
+  function openFocusCustom() {
+    let last = 40;
+    try { last = +localStorage.getItem('focusfill_focus_min') || 40; } catch (e) {}
+    openSheet(`<h2>집중 시간</h2>
+      <div class="time-row"><input type="number" id="fc-min" min="5" max="180" value="${last}" inputmode="numeric" style="width:6em" /><span>분</span></div>
+      <p class="muted small" style="margin-top:10px">${FOCUS_UNIT}분마다 +${XP.focus} XP · 하루 최대 ${FOCUS_DAY_MAX} XP</p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">취소</button><button class="btn primary" data-ok type="button">시작</button></div>`,
+    (b) => {
+      b.querySelector('[data-close]').onclick = closeSheet;
+      b.querySelector('[data-ok]').onclick = () => {
+        const m = Math.round(+$('fc-min').value);
+        if (!(m >= 5 && m <= 180)) return toast('5분에서 180분 사이로 정해 주세요');
+        try { localStorage.setItem('focusfill_focus_min', String(m)); } catch (e) {}
+        closeSheet(); startFocus(m);
+      };
+    });
+  }
+  function focusCardHtml() {
+    const f = U.focus;
+    const today = studyToday();
+    const head = `<div class="sec-head"><h2>집중</h2><span class="muted small">오늘 <b class="fc-today">${fmtDur(today)}</b></span></div>`;
+    if (f) {
+      return `<section class="card focus-card running${f.pausedAt ? ' paused' : ''}">${head}
+        <div class="fc-run"><div class="fc-left">${f.subject ? `<span class="fc-sub">${esc(f.subject)}</span>` : ''}<span class="fc-clock num" id="fc-clock">00:00</span>${f.pausedAt ? '<span class="fc-paused">일시정지</span>' : ''}</div>
+          <div class="fc-acts"><button class="btn small" data-act="focus-pause" type="button">${f.pausedAt ? '계속' : '일시정지'}</button><button class="btn small primary" data-act="focus-open" type="button">크게 보기</button></div></div>
+        <div class="bar thin"><div class="fill" id="fc-bar"></div></div></section>`;
+    }
+    const subs = U.subjects || [];
+    return `<section class="card focus-card">${head}
+      ${subs.length ? `<div class="chips fc-subs">${subs.map((x) => `<button type="button" class="chip${ui.focusSub === x ? ' selected' : ''}" data-act="focus-sub" data-v="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
+      <div class="fc-start"><button class="btn primary" data-act="focus-start" data-m="25" type="button">25분</button><button class="btn primary" data-act="focus-start" data-m="50" type="button">50분</button><button class="btn" data-act="focus-custom" type="button">직접</button></div>
+    </section>`;
+  }
+  // 공부 기록 (업적용)
+  function focusStats() {
+    const done = S.focus.filter((f) => f.done);
+    const byDay = {};
+    done.filter((f) => f.mins >= FOCUS_UNIT).forEach((f) => { const k = dateKey(f.start); byDay[k] = (byDay[k] || 0) + 1; });
+    const days = new Set(done.map((f) => dateKey(f.start)));
+    let run = 0, best = 0, prev = null;
+    [...days].sort().forEach((k) => { run = prev && dateKey(addDays(keyTs(prev), 1)) === k ? run + 1 : 1; best = Math.max(best, run); prev = k; });
+    const examH = Math.max(0, ...U.exams.map((e) => { const st = examStatus(e); return studyIn(st.ps, st.pe); }));
+    return { focusDone: done.length, studyH: Math.floor(studyIn(0, now() + DAY) / HOUR), focusDayMax: Math.max(0, ...Object.values(byDay)), focusRun: best, examStudyH: Math.floor(examH / HOUR) };
+  }
+
+  /* ---------- 비교 표 (지난달 · 실험 · 시험) ---------- */
+  function cmpHtml(rows, labels) {
+    let better = 0, total = 0;
+    const body = rows.filter(Boolean).map((r) => {
+      let cls = 'same', mark = '–';
+      if (r.p != null && r.c != null) {
+        total++;
+        const d = r.c - r.p;
+        if (Math.abs(d) > (r.eps || 1e-9)) {
+          const good = r.up ? d > 0 : d < 0;
+          if (good) better++;
+          cls = good ? 'good' : 'bad'; mark = d > 0 ? '▲' : '▼';
+        }
+      }
+      const show = (v, s) => (s != null ? s : v == null ? '-' : r.f(v));
+      return `<div class="cmp-r"><span class="cn">${r.name}</span><span class="cp">${show(r.p, r.ps)}</span><span class="cc">${show(r.c, r.cs)}</span><span class="trend ${cls}">${mark}</span></div>`;
+    }).join('');
+    return { html: `<div class="cmp"><div class="cmp-r cmp-h"><span></span><span>${labels[0]}</span><span>${labels[1]}</span><span></span></div>${body}</div>`, better, total };
+  }
+  const fmtN = (u) => (v) => `${Math.round(v * 10) / 10}${u}`;
+  const fmtPct = (v) => `${Math.round(v * 100)}%`;
+  const fmtSc = (v) => `★${fmtScore(v)}`;
+  // 두 기간 비교: 종료 · 충동 · 공부 · 별점 (+옵션)
+  function periodRows(pa, pb, ca, cb, extra) {
+    const P = rangeReport(pa, pb), Cr = rangeReport(ca, cb);
+    const rows = [];
+    if (extra) {
+      rows.push({ name: '디톡스 시간', p: P.detox, c: Cr.detox, f: fmtDur, up: true, eps: MIN });
+      rows.push({ name: '최장 기록', p: P.longest, c: Cr.longest, f: fmtDur, up: true, eps: MIN });
+    }
+    rows.push({ name: '종료', p: P.ends, c: Cr.ends, f: fmtN('번'), up: false });
+    if (extra) rows.push({ name: '참기 성공률', p: P.tries ? P.wins / P.tries : null, c: Cr.tries ? Cr.wins / Cr.tries : null, f: fmtPct, up: true, eps: 0.005 });
+    else rows.push({ name: '충동', p: P.tries, c: Cr.tries, f: fmtN('번'), up: false });
+    rows.push({ name: '공부 시간', p: P.study, c: Cr.study, f: fmtDur, up: true, eps: MIN });
+    rows.push({ name: '평균 별점', p: P.score ? P.score.avg : null, c: Cr.score ? Cr.score.avg : null, f: fmtSc, up: true, eps: 0.05 });
+    return rows;
+  }
+
+  /* ---------- 회고 공통 ---------- */
+  function prevMonthKey(mk) { const [y, m] = mk.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`; }
+  // 주간 회고: 일요일엔 이번 주, 월~수엔 지난주
+  function reviewWeekKey(t = now()) {
+    const dow = new Date(t).getDay();
+    if (dow === 0) return weekKey(t);
+    if (dow >= 1 && dow <= 3) return dateKey(addDays(weekStart(t), -7));
+    return null;
+  }
+  const weekReviewXpOk = (k, t = now()) => t >= addDays(keyTs(k), 6) && t < addDays(keyTs(k), 10);
+  const weekEligible = (k) => U.trackStart < addDays(keyTs(k), 5);
+  function weekReviewDue() { const k = reviewWeekKey(); return k && !U.weekReviews[k] && weekEligible(k) ? k : null; }
+  // 회고를 쓸 수 있는 가장 최근 주 (성장 탭)
+  function weekWritable() {
+    const k = reviewWeekKey() || dateKey(addDays(weekStart(now()), -7));
+    return weekEligible(k) ? k : null;
+  }
+  const thisWeekOne = () => { const r = U.weekReviews[dateKey(addDays(weekStart(now()), -7))]; return r && r.next ? r.next : ''; };
+  function monthReviewDue() {
+    if (new Date().getDate() > 7) return null;
+    const pk = prevMonthKey(monthKey(now()));
+    if (U.monthReviews[pk]) return null;
+    return U.trackStart < monthRange(pk)[1] - 3 * DAY ? pk : null;
+  }
+  const monthReviewXpOk = (mk, t = now()) => { const [, b] = monthRange(mk); return t >= b && t < addDays(b, 7); };
+  const thisMonthChange = () => { const r = U.monthReviews[prevMonthKey(monthKey(now()))]; return r && r.change ? r.change : ''; };
+  const wkLabel = (k) => `${mdShort(keyTs(k))}–${mdShort(addDays(keyTs(k), 6))}`;
+  const mkLabel = (mk) => `${Number(mk.split('-')[1])}월`;
+  const KEPT_TXT = { yes: '지켰어요', half: '반쯤', no: '못 지켰어요' };
+
+  function openWeekReview(k) {
+    if (!k) return;
+    const ws = keyTs(k), r = rangeReport(ws, addDays(ws, 7));
+    const cur = U.weekReviews[k] || {};
+    const prev = U.weekReviews[dateKey(addDays(ws, -7))];
+    const xpOk = !U.weekReviews[k] && weekReviewXpOk(k);
+    let kept = cur.prevKept || null;
+    openSheet(`<h2>${wkLabel(k)} 회고</h2>
+      <p class="muted small">종료 ${r.ends}번 · 디톡스 ${fmtDur(r.detox)} · 공부 ${fmtDur(r.study)}${r.score ? ` · 평균 ★${fmtScore(r.score.avg)}` : ''}</p>
+      ${prev && prev.next ? `<p class="label">지난주 한 가지 <span class="rv-one">${esc(prev.next)}</span></p>
+        <div class="chips" id="wr-kept">${Object.entries(KEPT_TXT).map(([v, t]) => `<button type="button" class="chip${kept === v ? ' selected' : ''}" data-v="${v}">${t}</button>`).join('')}</div>` : ''}
+      <p class="label">이번 주 잘한 것은?</p>
+      <textarea id="wr-good" maxlength="200" rows="2" placeholder="작은 것도 좋아요">${esc(cur.good || '')}</textarea>
+      <p class="label">다음 주에 할 한 가지는?</p>
+      <input id="wr-next" maxlength="40" placeholder="예: 자기 전 폰은 거실에" value="${esc(cur.next || '')}" />
+      <p class="form-err" id="wr-err"></p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">닫기</button><button class="btn primary" data-ok type="button">저장${xpOk ? ` +${XP.weekReview} XP` : ''}</button></div>`,
+    (b) => {
+      b.querySelectorAll('#wr-kept .chip').forEach((c) => { c.onclick = () => { kept = c.dataset.v; b.querySelectorAll('#wr-kept .chip').forEach((x) => x.classList.toggle('selected', x === c)); }; });
+      b.querySelector('[data-close]').onclick = closeSheet;
+      b.querySelector('[data-ok]').onclick = async () => {
+        const good = $('wr-good').value.trim(), next = $('wr-next').value.trim();
+        if (prev && prev.next && !kept) { $('wr-err').textContent = '지난주 한 가지를 지켰는지 골라주세요.'; return; }
+        if (!good || !next) { $('wr-err').textContent = '두 질문 모두 적어주세요.'; return; }
+        closeSheet();
+        const got = xpOk ? await gainFixed(XP.weekReview) : 0;
+        const rec = { ...cur, good, next, prevKept: prev && prev.next ? kept : null, at: cur.at || now(), xp: (cur.xp || 0) + got };
+        try { await saveUser({ weekReviews: { ...U.weekReviews, [k]: rec }, xp: U.xp }); } catch (e) {}
+        savePublic();
+        toast(got ? `회고를 남겼어요 (+${got} XP)` : '회고를 저장했어요');
+        refreshViews(); checkAchievements();
+      };
+    });
+  }
+
+  function openMonthReview(mk) {
+    if (!mk) return;
+    const [a, b] = monthRange(mk);
+    const cur = U.monthReviews[mk] || {};
+    const xpOk = !U.monthReviews[mk] && monthReviewXpOk(mk);
+    // 그 달의 '이번 주 한 가지'와 결과
+    const ones = Object.keys(U.weekReviews).sort().map((wk) => ({ wk, r: U.weekReviews[wk] }))
+      .filter(({ wk, r }) => r.next && addDays(keyTs(wk), 7) >= a && addDays(keyTs(wk), 7) < b)
+      .map(({ wk, r }) => { const nx = U.weekReviews[dateKey(addDays(keyTs(wk), 7))]; return { text: r.next, res: nx && nx.prevKept }; });
+    openSheet(`<h2>${mkLabel(mk)} 회고</h2>
+      ${ones.length ? `<p class="label">${mkLabel(mk)}의 한 가지</p><ul class="rv-ones">${ones.map((o) => `<li><span>${esc(o.text)}</span><span class="rv-res ${o.res || ''}">${o.res ? KEPT_TXT[o.res] : '-'}</span></li>`).join('')}</ul>` : ''}
+      <p class="label">가장 잘한 것은?</p>
+      <textarea id="mr-best" maxlength="200" rows="2">${esc(cur.best || '')}</textarea>
+      <p class="label">아쉬운 것은?</p>
+      <textarea id="mr-regret" maxlength="200" rows="2">${esc(cur.regret || '')}</textarea>
+      <p class="label">다음 달에 바꿀 것 하나는?</p>
+      <input id="mr-change" maxlength="40" placeholder="이번 달 다짐이 돼요" value="${esc(cur.change || '')}" />
+      <p class="form-err" id="mr-err"></p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">닫기</button><button class="btn primary" data-ok type="button">저장${xpOk ? ` +${XP.monthReview} XP` : ''}</button></div>`,
+    (el) => {
+      el.querySelector('[data-close]').onclick = closeSheet;
+      el.querySelector('[data-ok]').onclick = async () => {
+        const best = $('mr-best').value.trim(), regret = $('mr-regret').value.trim(), change = $('mr-change').value.trim();
+        if (!best || !regret || !change) { $('mr-err').textContent = '세 질문 모두 적어주세요.'; return; }
+        closeSheet();
+        const got = xpOk ? await gainFixed(XP.monthReview) : 0;
+        const rec = { ...cur, best, regret, change, at: cur.at || now(), xp: (cur.xp || 0) + got };
+        try { await saveUser({ monthReviews: { ...U.monthReviews, [mk]: rec }, xp: U.xp }); } catch (e) {}
+        savePublic();
+        const canExp = !activeExp() && nextMonthKey(mk) === monthKey(now());
+        toast(got ? `회고를 남겼어요 (+${got} XP)` : '회고를 저장했어요', canExp ? () => openExpSheet(change) : null, canExp ? 6000 : 2600, '실험으로');
+        refreshViews(); checkAchievements();
+      };
+    });
+  }
+  function refreshViews() {
+    if (ui.tab === 'home') renderHome();
+    if (ui.tab === 'records') renderRecords();
+  }
+
+  /* ---------- 무너진 날 돌아보기 ---------- */
+  function endReviewDay() {
+    const t0 = dayStart(now());
+    for (let i = 1; i <= 3; i++) {
+      const d = addDays(t0, -i), k = dateKey(d);
+      if (endsIn(d, addDays(d, 1)).length && !dailyOf(k).review) return k;
+    }
+    return null;
+  }
+  function endReviewCardHtml() {
+    const k = endReviewDay();
+    if (!k) return '';
+    const d0 = keyTs(k), ends = endsIn(d0, addDays(d0, 1));
+    const sits = [...new Set(ends.flatMap((r) => r.situations || []))];
+    const memos = ends.map((r) => r.memo).filter(Boolean);
+    const pre = [sits.join(', '), memos.join(' · ')].filter(Boolean).join(' · ');
+    const yest = k === dateKey(addDays(dayStart(now()), -1));
+    return `<section class="card review-card" data-k="${k}">
+      <div class="sec-head"><h2>${yest ? '어제' : md(d0)} 돌아보기</h2><span class="muted small">종료 ${ends.length}번</span></div>
+      <p class="rv-q">직전에 뭘 하고 있었나요?</p>
+      <input id="er-before" maxlength="80" value="${esc(pre)}" placeholder="그때 하던 일" />
+      <p class="rv-q">다음엔 어떻게 할래요?</p>
+      <input id="er-next" maxlength="80" placeholder="교훈 탭에 남아요" />
+      <div class="rv-acts"><button class="btn ghost small" data-act="er-skip" data-k="${k}" type="button">건너뛰기</button><button class="btn primary small" data-act="er-save" data-k="${k}" type="button">저장 +${XP.endReview} XP</button></div>
+    </section>`;
+  }
+  function addLessonTo(ls, text) {
+    let c = ls.find((x) => x.name === '디톡스 교훈');
+    if (!c) {
+      if (ls.length < LESSON_CAT_MAX) { c = { id: 'c' + uid6(), name: '디톡스 교훈', items: [] }; ls.push(c); } else c = ls[0];
+    }
+    if (c && c.items.length < LESSON_MAX) c.items.push({ id: 'i' + uid6(), text, at: now(), rv: 0 });
+    return ls;
+  }
+  async function saveEndReview(k, skip) {
+    if (dailyOf(k).review) return;
+    if (skip) { await setDaily(k, { review: { skip: true, at: now() } }); return renderHome(); }
+    const before = ($('er-before').value || '').trim(), next = ($('er-next').value || '').trim();
+    if (!next) { toast('다음엔 어떻게 할지 적어주세요'); return; }
+    const got = await gainFixed(XP.endReview);
+    const lessons = addLessonTo(cloneLessons(), next);
+    await setDaily(k, { review: { before, next, at: now(), xp: got } }, { xp: U.xp, lessons });
+    savePublic();
+    toast(`교훈에 남겼어요 (+${got} XP)`);
+    renderHome(); checkAchievements();
+  }
+
+  /* ---------- 시험 회고 ---------- */
+  function examReviewDue() {
+    return U.exams.map((e) => ({ e, st: examStatus(e) }))
+      .filter(({ e, st }) => st.state === 'over' && !e.review && !e.reviewSkip && now() < addDays(st.pe, 14) && st.pe > U.trackStart)
+      .sort((a, b) => a.st.pe - b.st.pe)[0] || null;
+  }
+  function examCmp(st) {
+    const A = [Math.max(st.ps, U.trackStart), st.pe], B = [Math.max(addDays(st.ps, -14), U.trackStart), st.ps];
+    const days = (r) => Math.max(1, Math.round((dayStart(r[1]) - dayStart(r[0])) / DAY));
+    const ra = rangeReport(...A), rb = B[1] > B[0] ? rangeReport(...B) : null;
+    const da = days(A), db_ = rb ? days(B) : 1;
+    return cmpHtml([
+      { name: '종료', p: rb ? rb.ends / db_ : null, c: ra.ends / da, ps: rb ? `${rb.ends}번 · ${db_}일` : null, cs: `${ra.ends}번 · ${da}일`, up: false, eps: 0.001, f: fmtN('') },
+      { name: '하루 공부', p: rb ? rb.study / db_ : null, c: ra.study / da, f: fmtDur, up: true, eps: MIN },
+      { name: '고요한 날', p: rb ? rb.calm / db_ : null, c: ra.calm / da, ps: rb ? `${rb.calm}일` : null, cs: `${ra.calm}일`, up: true, eps: 0.001, f: fmtN('') },
+      { name: '평균 별점', p: rb && rb.score ? rb.score.avg : null, c: ra.score ? ra.score.avg : null, f: fmtSc, up: true, eps: 0.05 },
+    ], ['평소 2주', '시험 기간']).html;
+  }
+  function examReviewCardHtml() {
+    const x = examReviewDue();
+    if (!x) return '';
+    return `<section class="card review-card exam-rv" data-id="${esc(x.e.id)}">
+      <div class="sec-head"><h2>${esc(x.e.name)} 회고</h2><span class="muted small">시험 기간 vs 평소</span></div>
+      ${examCmp(x.st)}
+      <p class="rv-q">이번 시험 기간 잘한 것은?</p>
+      <input id="ex-good" maxlength="80" />
+      <p class="rv-q">다음 시험 때 나에게 한마디</p>
+      <input id="ex-note" maxlength="60" placeholder="다음 시험 D-7부터 홈에 보여요" />
+      <div class="rv-acts"><button class="btn ghost small" data-act="ex-skip" data-id="${esc(x.e.id)}" type="button">건너뛰기</button><button class="btn primary small" data-act="ex-save" data-id="${esc(x.e.id)}" type="button">저장 +${XP.examReview} XP</button></div>
+    </section>`;
+  }
+  async function saveExamReview(id, skip) {
+    const e = U.exams.find((x) => x.id === id);
+    if (!e || e.review || e.reviewSkip) return;
+    if (skip) { await saveUser({ exams: U.exams.map((x) => (x.id === id ? { ...x, reviewSkip: true } : x)) }).catch(() => {}); return renderHome(); }
+    const good = ($('ex-good').value || '').trim(), note = ($('ex-note').value || '').trim();
+    if (!good || !note) { toast('두 질문 모두 적어주세요'); return; }
+    const got = await gainFixed(XP.examReview);
+    try { await saveUser({ exams: U.exams.map((x) => (x.id === id ? { ...x, review: { good, note, at: now(), xp: got } } : x)), xp: U.xp }); } catch (err) {}
+    savePublic();
+    toast(`시험 회고를 남겼어요 (+${got} XP)`);
+    renderHome(); checkAchievements();
+  }
+  // 다음 시험 D-7부터: 지난 시험 때 남긴 한마디
+  function examNote() {
+    const a = activeExam();
+    if (!a || a.st.dday > 7) return null;
+    const past = U.exams.filter((e) => e.id !== a.e.id && e.review && e.review.note && examStatus(e).state === 'over').sort((x, y) => y.end.localeCompare(x.end))[0];
+    return past ? { note: past.review.note, name: past.name } : null;
+  }
+
+  /* ---------- 교훈 다시 보기 ---------- */
+  function lessonDue() {
+    if (U.lessonSeenDay === dateKey(now())) return null;
+    const t0 = dayStart(now());
+    let best = null;
+    (U.lessons || []).forEach((c) => (c.items || []).forEach((it) => {
+      const rv = it.rv || 0;
+      if (it.learned || rv >= LESSON_RV.length) return;
+      const due = addDays(dayStart(it.at || U.lessonBase || now()), LESSON_RV[rv]);
+      if (due <= t0 && (!best || due < best.due)) best = { c, it, due };
+    }));
+    return best;
+  }
+  function lessonDueHtml() {
+    const x = lessonDue();
+    if (!x) return '';
+    return `<div class="ls-due"><span class="ls-due-k">다시 보는 교훈 · ${esc(x.c.name)}</span><p>${esc(x.it.text)}</p>
+      <div class="ls-due-acts"><button class="btn small ghost" data-act="ls-rv" data-v="keep" data-cat="${esc(x.c.id)}" data-id="${esc(x.it.id)}" type="button">아직 중요해요</button>
+      <button class="btn small" data-act="ls-rv" data-v="learned" data-cat="${esc(x.c.id)}" data-id="${esc(x.it.id)}" type="button">이제 몸에 뱄어요</button></div></div>`;
+  }
+  async function lessonReview(catId, id, v) {
+    const ls = cloneLessons(), c = ls.find((x) => x.id === catId), it = c && c.items.find((x) => x.id === id);
+    if (!it || U.lessonSeenDay === dateKey(now())) return;
+    if (!it.at) it.at = U.lessonBase || now();
+    if (v === 'learned') it.learned = now(); else it.rv = (it.rv || 0) + 1;
+    const got = await gainFixed(XP.lessonReview);
+    try { await saveUser({ lessons: ls, lessonSeenDay: dateKey(now()), lessonRvCount: (U.lessonRvCount || 0) + 1, xp: U.xp }); } catch (e) {}
+    savePublic();
+    toast(v === 'learned' ? `익힌 교훈으로 옮겼어요 (+${got} XP)` : `다음에 또 보여드릴게요 (+${got} XP)`);
+    renderHome(); checkAchievements();
+  }
+
+  /* ---------- 나에게 맞는 방법 찾기 (실험) ---------- */
+  const activeExp = () => (U.experiments || []).find((x) => !x.doneAt && !x.stopped) || null;
+  const expPending = () => { const x = activeExp(); return x && now() >= x.end ? x : null; };
+  const expDayN = (x) => Math.min(x.days, Math.floor((dayStart(now()) - x.start) / DAY) + 1);
+  function openExpSheet(prefill) {
+    if (activeExp()) return toast('진행 중인 실험이 끝나면 새로 시작할 수 있어요');
+    let days = 7;
+    openSheet(`<h2>새 실험</h2>
+      <p class="muted">나에게 효과가 있는지 며칠 동안 해 봐요.</p>
+      <p class="label">무엇을</p>
+      <input id="xp-text" maxlength="40" placeholder="예: 자기 전 폰 거실에 두기" value="${esc(prefill || '')}" />
+      <p class="label">며칠 동안</p>
+      <div class="seg" id="xp-days">${[3, 7, 14].map((d) => `<button class="seg-btn${d === days ? ' active' : ''}" data-d="${d}" type="button">${d}일</button>`).join('')}</div>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">취소</button><button class="btn primary" data-ok type="button">시작</button></div>`,
+    (b) => {
+      b.querySelectorAll('#xp-days .seg-btn').forEach((x) => { x.onclick = () => { days = +x.dataset.d; b.querySelectorAll('#xp-days .seg-btn').forEach((y) => y.classList.toggle('active', y === x)); }; });
+      b.querySelector('[data-close]').onclick = closeSheet;
+      b.querySelector('[data-ok]').onclick = async () => {
+        const text = $('xp-text').value.trim();
+        if (!text) return toast('무엇을 해 볼지 적어주세요');
+        closeSheet();
+        const start = dayStart(now());
+        const x = { id: 'x' + uid6(), text, days, start, end: addDays(start, days), at: now() };
+        try { await saveUser({ experiments: [...U.experiments, x] }); toast(`실험 시작! ${days}일 동안 해 봐요`); } catch (e) {}
+        refreshViews();
+      };
+    });
+  }
+  function expCmp(x) {
+    const pa = Math.max(addDays(x.start, -x.days), U.trackStart);
+    const short = pa > addDays(x.start, -x.days);
+    const t = cmpHtml(periodRows(pa, x.start, x.start, x.end, false), [`실험 전 ${x.days}일`, '실험 기간']);
+    return t.html + (short ? '<p class="muted small cmp-note">실험 전 기록이 짧아서 비교가 정확하지 않을 수 있어요</p>' : '');
+  }
+  function expResultCardHtml() {
+    const x = expPending();
+    if (!x) return '';
+    return `<section class="card review-card exp-card">
+      <div class="sec-head"><h2>실험 끝</h2><span class="muted small">${x.days}일</span></div>
+      <p class="exp-t">${esc(x.text)}</p>
+      ${expCmp(x)}
+      <p class="rv-q">효과가 있었나요?</p>
+      <div class="rv-acts three"><button class="btn small" data-act="exp-rate" data-v="yes" type="button">있었어요</button><button class="btn small ghost" data-act="exp-rate" data-v="unsure" type="button">모르겠어요</button><button class="btn small ghost" data-act="exp-rate" data-v="no" type="button">없었어요</button></div>
+    </section>`;
+  }
+  async function rateExp(v) {
+    const x = expPending();
+    if (!x) return;
+    const got = await gainFixed(XP.experiment);
+    try { await saveUser({ experiments: U.experiments.map((e) => (e.id === x.id ? { ...e, rating: v, doneAt: now(), xp: got } : e)), xp: U.xp }); } catch (e) {}
+    savePublic();
+    toast(v === 'yes' ? `나에게 맞는 방법에 넣었어요 (+${got} XP)` : `실험을 마쳤어요 (+${got} XP)`);
+    refreshViews(); checkAchievements();
+  }
+  async function stopExp() {
+    const x = activeExp();
+    if (!x) return;
+    confirmSheet('실험을 그만둘까요?', '그만두면 결과와 경험치는 없어요.', '그만두기', async () => {
+      try { await saveUser({ experiments: U.experiments.map((e) => (e.id === x.id ? { ...e, stopped: now() } : e)) }); } catch (e) {}
+      refreshViews();
+    });
+  }
+  function fitsList() {
+    const seen = new Set();
+    return (U.experiments || []).filter((x) => x.rating === 'yes').reverse().filter((x) => (seen.has(x.text) ? false : seen.add(x.text)));
+  }
+
+  /* ---------- 미래의 나에게 편지 ---------- */
+  const sealed = () => (U.letters || []).filter((l) => !l.openedAt);
+  const lettersDue = () => sealed().filter((l) => l.openAt <= now()).sort((a, b) => a.openAt - b.openAt);
+  function snapNow() { return { lv: levelOf(U.xp), best: Math.max(U.bestMs || 0, curMs()), study: studyIn(0, now() + DAY) + focusRunMs() }; }
+  function openLetterWrite() {
+    if (sealed().length >= LETTER_OPEN_MAX) return toast(`아직 안 열린 편지는 ${LETTER_OPEN_MAX}통까지예요`);
+    const ups = U.exams.map((e) => ({ e, st: examStatus(e) })).filter((x) => x.st.pe >= addDays(dayStart(now()), 7)).sort((a, b) => a.st.pe - b.st.pe);
+    let kind = '30';
+    const minDate = dateKey(addDays(dayStart(now()), 7));
+    openSheet(`<h2>미래의 나에게</h2>
+      <textarea id="lt-text" maxlength="500" rows="6" placeholder="지금의 마음, 바라는 것, 응원 한마디"></textarea>
+      <p class="label">언제 열까요?</p>
+      <div class="chips" id="lt-kind">
+        <button type="button" class="chip selected" data-k="30">30일 뒤</button>
+        <button type="button" class="chip" data-k="100">100일 뒤</button>
+        ${ups.length ? `<button type="button" class="chip" data-k="exam">시험 끝난 날</button>` : ''}
+        <button type="button" class="chip" data-k="date">날짜 지정</button></div>
+      ${ups.length ? `<select id="lt-exam" class="hidden" style="margin-top:10px">${ups.map((x) => `<option value="${esc(x.e.id)}">${esc(x.e.name)} (${mdShort(x.st.pe)})</option>`).join('')}</select>` : ''}
+      <input type="date" id="lt-date" class="hidden" min="${minDate}" value="${minDate}" style="margin-top:10px" />
+      <p class="form-err" id="lt-err"></p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">취소</button><button class="btn primary" data-ok type="button">봉인하기</button></div>`,
+    (b) => {
+      b.querySelectorAll('#lt-kind .chip').forEach((c) => {
+        c.onclick = () => {
+          kind = c.dataset.k;
+          b.querySelectorAll('#lt-kind .chip').forEach((x) => x.classList.toggle('selected', x === c));
+          if ($('lt-exam')) $('lt-exam').classList.toggle('hidden', kind !== 'exam');
+          $('lt-date').classList.toggle('hidden', kind !== 'date');
+        };
+      });
+      b.querySelector('[data-close]').onclick = closeSheet;
+      b.querySelector('[data-ok]').onclick = async () => {
+        const text = $('lt-text').value.trim();
+        if (!text) { $('lt-err').textContent = '편지를 적어주세요.'; return; }
+        const t0 = dayStart(now());
+        let openAt;
+        if (kind === '30') openAt = addDays(t0, 30);
+        else if (kind === '100') openAt = addDays(t0, 100);
+        else if (kind === 'exam') { const x = ups.find((u) => u.e.id === $('lt-exam').value); openAt = x ? x.st.pe : addDays(t0, 30); }
+        else {
+          const v = $('lt-date').value;
+          if (!v || v < minDate) { $('lt-err').textContent = '일주일 뒤부터 고를 수 있어요.'; return; }
+          openAt = keyTs(v);
+        }
+        closeSheet();
+        const l = { id: 'l' + uid6(), text, at: now(), openAt, kind, snap: snapNow() };
+        try { await saveUser({ letters: [...U.letters, l] }); toast(`${md(openAt)}에 열려요`); } catch (e) {}
+        refreshViews(); checkAchievements();
+      };
+    });
+  }
+  async function openLetter(id) {
+    const l = (U.letters || []).find((x) => x.id === id);
+    if (!l || (!l.openedAt && l.openAt > now())) return;
+    let got = 0;
+    if (!l.openedAt) {
+      got = await gainFixed(XP.letter);
+      try { await saveUser({ letters: U.letters.map((x) => (x.id === id ? { ...x, openedAt: now(), xp: got } : x)), xp: U.xp }); } catch (e) {}
+      savePublic();
+    }
+    const s0 = l.snap || {}, s1 = snapNow();
+    const row = (n, a, b, f) => `<div class="cmp-r"><span class="cn">${n}</span><span class="cp">${a == null ? '-' : f(a)}</span><span class="cc">${f(b)}</span><span class="trend ${b > (a || 0) ? 'good' : 'same'}">${b > (a || 0) ? '▲' : '–'}</span></div>`;
+    openSheet(`<p class="lt-kicker">${md(l.at)}의 내가 보낸 편지${got ? ` · +${got} XP` : ''}</p>
+      <div class="letter">${esc(l.text).replace(/\n/g, '<br>')}</div>
+      <div class="cmp"><div class="cmp-r cmp-h"><span></span><span>그때</span><span>지금</span><span></span></div>
+        ${row('레벨', s0.lv, s1.lv, (v) => `Lv.${v}`)}${row('최장 기록', s0.best, s1.best, fmtDur)}${row('누적 공부', s0.study, s1.study, fmtDur)}</div>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">닫기</button><button class="btn primary" data-ok type="button">새 편지 쓰기</button></div>`,
+    (b) => {
+      b.querySelector('[data-close]').onclick = closeSheet;
+      b.querySelector('[data-ok]').onclick = () => { closeSheet(); setTimeout(openLetterWrite, 50); };
+    });
+    if (got) { refreshViews(); checkAchievements(); }
+  }
+
+  /* ---------- 내가 시작한 이유 ---------- */
+  const randWhy = () => (U && U.whys && U.whys.length ? U.whys[Math.floor(Math.random() * U.whys.length)] : '');
+  async function addWhy(inputId) {
+    const inp = $(inputId), v = inp && inp.value.trim();
+    if (!v) return;
+    if (U.whys.length >= WHY_MAX) return toast(`이유는 ${WHY_MAX}개까지예요`);
+    try { await saveUser({ whys: [...U.whys, v], whyAsked: true }); toast('이유를 적어 뒀어요. 흔들릴 때 보여드릴게요'); } catch (e) {}
+    refreshViews(); checkAchievements();
+  }
+  function whyAskHtml() {
+    if ((U.whys && U.whys.length) || U.whyAsked) return '';
+    return `<section class="card why-ask">
+      <div class="sec-head"><h2>왜 끊고 싶나요?</h2><button class="link" data-act="why-later" type="button">나중에</button></div>
+      <p class="muted small">종료 버튼을 누를 때마다 이 말이 떠요.</p>
+      <div class="inline-add"><input id="why-home" maxlength="60" placeholder="예: 공부에 집중하고 싶어서" /><button class="btn primary" data-act="why-add" data-src="why-home" type="button">저장</button></div>
+    </section>`;
+  }
+  let whyTimer = null;
+  function showWhyPop(on) {
+    const el = $('why-pop');
+    if (!el) return;
+    clearTimeout(whyTimer);
+    if (on) {
+      const w = randWhy();
+      if (!w) return;
+      $('why-pop-text').textContent = w;
+      show(el); requestAnimationFrame(() => el.classList.add('on'));
+    } else { el.classList.remove('on'); whyTimer = setTimeout(() => hide(el), 250); }
+  }
+
+  /* ---------- 고비 구간 · 나의 패턴 ---------- */
+  const DUR_BINS = [[0, 1, '1일 미만'], [1, 3, '1~2일'], [3, 5, '3~4일'], [5, 8, '5~7일'], [8, 15, '8~14일'], [15, 31, '15~30일'], [31, 1e6, '31일 이상']];
+  function gobi() {
+    if (S.streaks.length < 5) return null;
+    const counts = DUR_BINS.map(() => 0);
+    S.streaks.forEach((s) => { const d = s.durationMs / DAY; const i = DUR_BINS.findIndex(([lo, hi]) => d >= lo && d < hi); if (i >= 0) counts[i]++; });
+    let top = 0;
+    counts.forEach((n, i) => { if (n > counts[top]) top = i; });
+    return { counts, top, n: counts[top] };
+  }
+  function gobiNow() {
+    if (!U.riskOn || !isActive()) return null;
+    const g = gobi();
+    if (!g || g.top === 0 || g.n < 2) return null;
+    const [lo, hi, label] = DUR_BINS[g.top], d = curMs() / DAY;
+    return d >= lo && d < hi ? { label } : null;
+  }
+  const SIT_TXT = { '심심함': '심심할 때', '피곤함': '피곤할 때', '스트레스': '스트레스 받을 때', '혼자 있음': '혼자 있을 때', '잠들기 전': '잠들기 전', '할 일 미루는 중': '할 일을 미룰 때' };
+  const HM_COLS = ['새벽', '이른 아침', '오전', '오후', '저녁', '밤'];
+  const HM_SHORT = ['0시', '4시', '8시', '12시', '16시', '20시'];
+  const WD = ['월', '화', '수', '목', '금', '토', '일'];
+  function patternCard() {
+    const done = S.streaks;
+    if (done.length < 5) {
+      return `<section class="card"><h2>나의 패턴</h2><p class="empty">종료 기록이 5개 쌓이면 보여드릴게요. (지금 ${done.length}개)</p></section>`;
+    }
+    const grid = Array.from({ length: 7 }, () => Array(6).fill(0));
+    const wdc = Array(7).fill(0), colc = Array(6).fill(0);
+    done.forEach((s) => { const d = new Date(s.end), w = (d.getDay() + 6) % 7, c = Math.floor(d.getHours() / 4); grid[w][c]++; wdc[w]++; colc[c]++; });
+    const max = Math.max(1, ...grid.flat());
+    const topC = colc.indexOf(Math.max(...colc));
+    const sits = {}; done.forEach((s) => (s.situations || []).forEach((x) => { sits[x] = (sits[x] || 0) + 1; }));
+    const topS = topOf(sits);
+    // 가장 짙은 칸이 2번 이상이면 그 요일·시간대, 아니면 시간대만
+    let cw = 0, cc = 0;
+    grid.forEach((row, w) => row.forEach((n, c) => { if (n > grid[cw][cc]) { cw = w; cc = c; } }));
+    const when = grid[cw][cc] >= 2 && grid[cw][cc] / done.length >= 0.2 ? `${WD[cw]}요일 ${HM_COLS[cc]}` : HM_COLS[topC];
+    const sentence = `주로 <b>${when}</b>${topS ? `, <b>${esc(SIT_TXT[topS] || topS)}</b>` : ''} 무너져요`;
+    const g = gobi();
+    const reasons = {}; done.forEach((s) => { reasons[s.reason] = (reasons[s.reason] || 0) + 1; });
+    const rList = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
+    const sList = Object.entries(sits).sort((a, b) => b[1] - a[1]);
+    const bar = (name, n, mx) => `<div class="hbar"><span class="name">${esc(name)}</span><span class="track"><i style="width:${(n / Math.max(1, mx)) * 100}%"></i></span><span class="n">${n}</span></div>`;
+    const lv = (n) => (n ? Math.min(4, Math.ceil((n / max) * 4)) : 0);
+    return `<section class="card pattern-card">
+      <h2>나의 패턴</h2>
+      <p class="pt-sum">${sentence}</p>
+      <div class="hm" role="table" aria-label="요일과 시간대별 종료">
+        <span></span>${HM_SHORT.map((h) => `<span class="hm-h">${h}</span>`).join('')}
+        ${grid.map((row, w) => `<span class="hm-w">${WD[w]}</span>${row.map((n, c) => `<span class="hm-c l${lv(n)}" title="${WD[w]}요일 ${HM_COLS[c]} · ${n}번"><i></i></span>`).join('')}`).join('')}
+      </div>
+      <div class="hm-legend"><span>적음</span>${[1, 2, 3, 4].map((i) => `<span class="hm-c l${i}"><i></i></span>`).join('')}<span>많음</span></div>
+      ${g ? `<h3 class="pt-h">버틴 기간별 종료</h3><p class="muted small pt-sub"><b>${DUR_BINS[g.top][2]}</b> 버텼을 때 가장 많이 끝났어요</p>
+        <div class="hbars">${DUR_BINS.map((b, i) => (g.counts[i] ? bar(b[2], g.counts[i], g.n) : '')).join('')}</div>` : ''}
+      <div class="grid-2" style="margin-top:18px">
+        <div><h3 style="margin-bottom:10px">종료 이유</h3><div class="hbars">${rList.map(([k, n]) => bar(k, n, rList[0][1])).join('')}</div></div>
+        <div><h3 style="margin-bottom:10px">무너질 때 상황</h3>${sList.length ? `<div class="hbars">${sList.map(([k, n]) => bar(k, n, sList[0][1])).join('')}</div>` : '<p class="empty">종료할 때 상황을 고르면 여기에 모여요.</p>'}</div>
+      </div>
+    </section>`;
+  }
+
+  /* ---------- 별점 흐름 · 별점 분석 ---------- */
+  function scoreBars(a, n) {
+    const cols = [];
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const d = addDays(a, i);
+      if (d > now()) break;
+      const v = scoreOf(dateKey(d));
+      if (v != null) any = true;
+      cols.push({ d, v });
+    }
+    if (!any) return '';
+    const total = n;
+    const lab = (c, i) => (total <= 7 ? DOW[new Date(c.d).getDay()] : (i === 0 || (i + 1) % 5 === 0 ? new Date(c.d).getDate() : ''));
+    const pad_ = Array.from({ length: total - cols.length }, () => '<div class="sb"><span class="sb-col"></span><span class="sb-l"></span></div>').join('');
+    return `<div class="sbars-wrap"><h3>별점 흐름</h3>
+      <div class="sbars${total > 7 ? ' dense' : ''}" style="grid-template-columns:repeat(${total},1fr)">${cols.map((c, i) => `<div class="sb" title="${mdShort(c.d)} ${c.v == null ? '기록 없음' : '★' + fmtStar(c.v)}"><span class="sb-col">${c.v == null ? '<i class="sb-none"></i>' : `<i class="sb-bar" style="height:${Math.max(4, (c.v / 5) * 100).toFixed(0)}%"></i>`}</span><span class="sb-l">${lab(c, i)}</span></div>`).join('')}${pad_}</div></div>`;
+  }
+  function scoreNotes(a, b) {
+    const end = Math.min(b, now()), notes = [];
+    const ok = avgScoreIn(a, end, (d) => !endsIn(d, addDays(d, 1)).length && detoxIn(d, Math.min(addDays(d, 1), now())) > 0);
+    const bad = avgScoreIn(a, end, (d) => endsIn(d, addDays(d, 1)).length > 0);
+    if (ok && bad) notes.push(`지킨 날 평균 <b>★${fmtScore(ok.avg)}</b>, 종료한 날 <b>★${fmtScore(bad.avg)}</b>`);
+    const hi = avgScoreIn(a, end, (d) => studyIn(d, addDays(d, 1)) >= 2 * HOUR);
+    const lo = avgScoreIn(a, end, (d) => studyIn(d, addDays(d, 1)) < 2 * HOUR);
+    if (hi && lo && hi.n >= 2 && lo.n >= 2) {
+      const df = hi.avg - lo.avg;
+      if (Math.abs(df) >= 0.3) notes.push(`공부 2시간 이상인 날 별점이 <b>${fmtScore(Math.abs(df))}</b> ${df > 0 ? '더 높았어요' : '더 낮았어요'}`);
+    }
+    return notes;
+  }
+
+  /* ---------- 오늘 한 줄 ---------- */
+  function dayTags(k) {
+    const d0 = keyTs(k), d1 = addDays(d0, 1), tags = [];
+    if (d1 <= U.trackStart) return tags;
+    const ends = endsIn(d0, d1).length;
+    if (ends) tags.push({ t: `종료 ${ends}번`, c: 'r' });
+    else if (calmDone(d0)) tags.push({ t: '고요한 날', c: 'calm' });
+    else if (okDay(d0)) tags.push({ t: '지킨 날', c: 'ok' });
+    const st = studyIn(d0, Math.min(d1, now())) + (k === dateKey(now()) ? focusRunMs() : 0);
+    if (st >= MIN) tags.push({ t: `공부 ${fmtDur(st)}`, c: 'st' });
+    const ps = pledgesOf(k);
+    if (ps.length) tags.push({ t: `다짐 ${ps.filter((p) => p.check === 'yes').length}/${ps.length}`, c: '' });
+    return tags;
+  }
+  const tagsHtml = (k) => { const t = dayTags(k); return t.length ? `<span class="jtags">${t.map((x) => `<span class="jtag ${x.c}">${esc(x.t)}</span>`).join('')}</span>` : ''; };
+  function pastEntry(k) {
+    const d = new Date(keyTs(k));
+    const y1 = new Date(d.getFullYear() - 1, d.getMonth(), d.getDate());
+    if (y1.getDate() === d.getDate()) { const kk = dateKey(y1.getTime()); if (S.journal[kk]) return { label: '1년 전 오늘', k: kk }; }
+    const m1 = new Date(d.getFullYear(), d.getMonth() - 1, d.getDate());
+    if (m1.getDate() === d.getDate()) { const kk = dateKey(m1.getTime()); if (S.journal[kk]) return { label: '한 달 전 오늘', k: kk }; }
+    return null;
+  }
+  // 어제 한 줄: 다음 날 정오까지
+  function yesterdayOpen() {
+    const yk = dateKey(addDays(dayStart(now()), -1));
+    return new Date().getHours() < 12 && !S.journal[yk] && addDays(keyTs(yk), 1) > U.trackStart ? yk : null;
+  }
+  function journalCardHtml() {
+    const today = dateKey(now());
+    const yk = yesterdayOpen();
+    if (ui.jDay === 'y' && !yk) ui.jDay = 't';
+    const k = ui.jDay === 'y' ? yk : today;
+    const j = S.journal[k];
+    const jStreak = journalStreak();
+    const editing = !j || ui.editJournal;
+    const q = (j && j.q) || questionFor(k);
+    if (editing && ui.score == null && j) ui.score = jScore(j);
+    const title = ui.jDay === 'y' ? '어제 한 줄' : '오늘 한 줄';
+    const right = j && !ui.editJournal ? '<button class="link" data-act="edit-journal" type="button">고치기</button>'
+      : `<span class="muted small">${md(keyTs(k))}</span>`;
+    let body;
+    if (!editing) {
+      const pe = pastEntry(k), pj = pe && S.journal[pe.k];
+      body = `<div class="j-view">
+        <div class="j-top">${starsHtml(jScore(j), 's-md')}${jScore(j) != null ? `<b class="num j-sc">${fmtStar(jScore(j))}</b>` : ''}</div>
+        ${j.q ? `<p class="j-q">${esc(j.q)}</p>` : ''}
+        <p class="j-text">${esc(j.text)}</p>
+        ${tagsHtml(k)}
+        ${pj ? `<div class="j-past"><span class="j-past-k">${pe.label}</span>${jScore(pj) != null ? starsHtml(jScore(pj), 's-sm') : ''}<p>${esc(pj.text)}</p></div>` : ''}
+      </div>`;
+    } else {
+      const canAlt = !j && !dailyOf(k).qAlt;
+      body = `<div class="j-edit">
+        <p class="j-q big">${esc(q)}${canAlt ? ' <button class="link j-alt" data-act="q-alt" data-k="' + k + '" type="button">다른 질문</button>' : ''}</p>
+        <div class="star-row">${`<div class="star-in" id="star-in" role="slider" tabindex="0" aria-label="${ui.jDay === 'y' ? '어제' : '오늘'} 별점" aria-valuemin="0" aria-valuemax="5" aria-valuenow="${ui.score == null ? 0 : ui.score}"><span class="st-zero" aria-hidden="true"></span>${starsHtml(ui.score, 's-lg')}</div>`}<b class="st-val num" id="st-val">${ui.score == null ? '' : fmtStar(ui.score)}</b></div>
+        <div class="inline-add"><input id="journal-input" maxlength="80" placeholder="한 줄로 적어요" value="${esc(j ? j.text : '')}" />
+        <button class="btn primary" data-act="save-journal" type="button">저장</button></div>
+      </div>`;
+    }
+    const yLink = yk && ui.jDay !== 'y' && S.journal[today] && !ui.editJournal ? `<button class="link j-yest" data-act="j-day" data-v="y" type="button">어제 한 줄도 쓰기</button>`
+      : yk && ui.jDay !== 'y' && !S.journal[today] ? `<button class="link j-yest" data-act="j-day" data-v="y" type="button">어제 한 줄 쓰기</button>`
+        : ui.jDay === 'y' ? '<button class="link j-yest" data-act="j-day" data-v="t" type="button">오늘로 돌아가기</button>' : '';
+    return `<section class="card journal-card">
+      <div class="sec-head"><h2>${title} ${jStreak ? `<span class="streak-chip">${jStreak}일 연속</span>` : ''}</h2>${right}</div>
+      ${body}${yLink}
+      ${lessonDueHtml()}
+    </section>`;
+  }
+
+  /* ---------- 백업 ---------- */
+  function download(name, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+  function backupData() {
+    const strip = (arr) => arr.map((x) => ({ ...x }));
+    return {
+      app: 'FocusFill', kind: 'backup', v: 1, appVersion: APP_VERSION, exportedAt: now(), id: idOf(me.email),
+      user: JSON.parse(JSON.stringify(U)),
+      streaks: strip(S.streaks), urges: strip(S.urges), journal: Object.values(S.journal).map((j) => ({ ...j })), focus: strip(S.focus),
+    };
+  }
+  async function exportBackup(prefix = 'focusfill-backup') {
+    const name = `${prefix}-${dateKey(now())}.json`;
+    download(name, JSON.stringify(backupData()));
+    try { await saveUser({ lastBackupAt: now() }); } catch (e) {}
+    if (ui.tab === 'settings') renderSettings();
+    toast('백업 파일을 저장했어요');
+  }
+  function validBackup(d) {
+    return d && d.app === 'FocusFill' && d.kind === 'backup' && d.user && typeof d.user === 'object' && d.user.onboarded
+      && ['streaks', 'urges', 'journal', 'focus'].every((k) => d[k] == null || Array.isArray(d[k]));
+  }
+  function pickImport() {
+    if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 가져와 주세요');
+    const inp = $('import-file');
+    inp.value = '';
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      if (f.size > 8 * 1024 * 1024) return toast('파일이 너무 커요');
+      const rd = new FileReader();
+      rd.onload = () => {
+        let d = null;
+        try { d = JSON.parse(rd.result); } catch (e) { d = null; }
+        if (!validBackup(d)) return toast('FocusFill 백업 파일이 아니에요', null, 3500);
+        previewImport(d);
+      };
+      rd.onerror = () => toast('파일을 읽지 못했어요');
+      rd.readAsText(f);
+    };
+    inp.click();
+  }
+  function previewImport(d) {
+    const u = d.user;
+    const n = (k) => (d[k] || []).length;
+    openSheet(`<h2>이 백업으로 바꿀까요?</h2>
+      <div class="imp-box">
+        <div class="cmp-r"><span class="cn">백업한 날</span><span class="cc">${md(d.exportedAt)} ${hm(d.exportedAt)}</span></div>
+        <div class="cmp-r"><span class="cn">기록 시작</span><span class="cc">${u.trackStart ? md(u.trackStart) : '-'}</span></div>
+        <div class="cmp-r"><span class="cn">레벨</span><span class="cc">Lv.${levelOf(u.xp || 0)}</span></div>
+        <div class="cmp-r"><span class="cn">종료 · 참기</span><span class="cc">${n('streaks')} · ${n('urges')}</span></div>
+        <div class="cmp-r"><span class="cn">한 줄 · 집중</span><span class="cc">${n('journal')} · ${n('focus')}</span></div>
+      </div>
+      <p class="muted small" style="margin-top:12px">지금 기록은 이 백업으로 바뀌어요. 바꾸기 전에 지금 기록을 파일로 먼저 저장해 둘게요. 친구와 친구 코드는 그대로예요.</p>
+      <p class="form-err" id="imp-err"></p>
+      <div class="sheet-actions"><button class="btn ghost" data-close type="button">취소</button><button class="btn danger" data-ok type="button">바꾸기</button></div>`,
+    (el) => {
+      el.querySelector('[data-close]').onclick = closeSheet;
+      el.querySelector('[data-ok]').onclick = async () => {
+        if (navigator.onLine === false) { $('imp-err').textContent = '인터넷에 연결된 뒤 다시 해 주세요.'; return; }
+        const b = el.querySelector('[data-ok]'); b.disabled = true; b.textContent = '바꾸는 중…';
+        try { await doImport(d); closeSheet(); }
+        catch (e) { $('imp-err').textContent = '바꾸지 못했어요. 다시 시도해 주세요.'; b.disabled = false; b.textContent = '바꾸기'; }
+      };
+    });
+  }
+  async function doImport(d) {
+    download(`focusfill-before-import-${dateKey(now())}.json`, JSON.stringify(backupData()));
+    const base = userPath();
+    for (const col of ['streaks', 'urges', 'journal', 'focus']) {
+      const docs = await db.list(`${base}/${col}`);
+      await Promise.all(docs.map((x) => db.del(`${base}/${col}/${x.id}`)));
+    }
+    for (const col of ['streaks', 'urges', 'journal', 'focus']) {
+      const list = (d[col] || []).filter((x) => x && typeof x === 'object');
+      await Promise.all(list.map((x) => {
+        const { id, ...rest } = x;
+        const docId = col === 'journal' ? (id || '') : (id || uid6());
+        if (!docId || !/^[\w-]{1,64}$/.test(String(docId))) return null;
+        return db.put(`${base}/${col}/${docId}`, rest);
+      }));
+    }
+    const user = { ...d.user, friendCode: U.friendCode || '', codeOk: !!U.codeOk, onboarded: true, urge: null, focus: null, lastBackupAt: now() };
+    await db.put(base, user);
+    hide($('urge')); hide($('modal-reset')); focusUi(false);
+    celQueue.length = 0; celOn = false; hide($('celebrate'));
+    U = normalize(user);
+    await loadRecords(true);
+    savePublic(true);
+    ui.weekOff = U.trackStart < weekStart(now()) ? 1 : 0; ui.monthOff = U.trackStart < monthRange(monthKey(now()))[0] ? 1 : 0; ui.year = null; ui.calMonth = null;
+    $('top-name').textContent = U.nickname;
+    switchTab('home');
+    toast('백업으로 바꿨어요');
+  }
+
+  /* ---------- 성장 탭 ---------- */
+  function growthHtml() {
+    const whys = U.whys || [];
+    const x = activeExp();
+    const fits = fitsList();
+    const pastExp = (U.experiments || []).filter((e) => e.doneAt && e.rating !== 'yes').slice(-5).reverse();
+    const wk = weekWritable();
+    const wkeys = Object.keys(U.weekReviews).sort().reverse();
+    const pmk = prevMonthKey(monthKey(now()));
+    const mWritable = !U.monthReviews[pmk] && U.trackStart < monthRange(pmk)[1] ? pmk : null;
+    const mkeys = Object.keys(U.monthReviews).sort().reverse();
+    const exRv = U.exams.filter((e) => e.review).sort((a, b) => b.end.localeCompare(a.end));
+    const sl = sealed().sort((a, b) => a.openAt - b.openAt);
+    const opened = (U.letters || []).filter((l) => l.openedAt).sort((a, b) => b.openedAt - a.openedAt);
+    const more = (key, list, n) => (ui.growAll[key] ? list : list.slice(0, n));
+    const moreBtn = (key, list, n) => (list.length > n ? `<button class="link" data-act="grow-more" data-k="${key}" type="button">${ui.growAll[key] ? '접기' : `전체 ${list.length}개 보기`}</button>` : '');
+    return `
+      <section class="card">
+        <div class="sec-head"><h2>내가 시작한 이유</h2><span class="muted small">${whys.length}/${WHY_MAX}</span></div>
+        ${whys.length ? `<ul class="why-list">${whys.map((w, i) => `<li><span>${esc(w)}</span><button class="icon-btn small" data-act="why-del" data-i="${i}" type="button" aria-label="지우기">${ICON.x}</button></li>`).join('')}</ul>` : '<p class="muted small" style="margin-bottom:10px">종료 버튼을 누르는 동안 이 말이 떠요.</p>'}
+        ${whys.length < WHY_MAX ? `<div class="inline-add"><input id="why-grow" maxlength="60" placeholder="왜 끊고 싶나요?" /><button class="btn" data-act="why-add" data-src="why-grow" type="button">추가</button></div>` : ''}
+      </section>
+
+      <section class="card">
+        <div class="sec-head"><h2>실험</h2>${!x ? `<button class="btn small primary" data-act="exp-new" type="button">${ICON.plus}새 실험</button>` : ''}</div>
+        ${x ? `<div class="exp-now"><div class="exp-top"><b>${esc(x.text)}</b><span class="muted small">${now() >= x.end ? '결과를 기다려요' : `${expDayN(x)}/${x.days}일`}</span></div>
+          <div class="bar thin"><div class="fill" style="width:${Math.min(100, ((now() - x.start) / (x.end - x.start)) * 100).toFixed(1)}%"></div></div>
+          ${now() >= x.end ? expCmp(x) + `<div class="rv-acts three" style="margin-top:12px"><button class="btn small" data-act="exp-rate" data-v="yes" type="button">있었어요</button><button class="btn small ghost" data-act="exp-rate" data-v="unsure" type="button">모르겠어요</button><button class="btn small ghost" data-act="exp-rate" data-v="no" type="button">없었어요</button></div>`
+            : '<button class="link danger" data-act="exp-stop" type="button" style="margin-top:8px">그만두기</button>'}</div>` : (fits.length || pastExp.length ? '' : '<p class="muted small">며칠 동안 해 보고, 효과가 있었는지 기록과 함께 확인해요.</p>')}
+        ${fits.length ? `<h3 class="gr-h">나에게 맞는 방법</h3><ul class="fit-list">${fits.map((f) => `<li><span>${esc(f.text)}</span>${!x ? `<button class="btn small ghost" data-act="exp-again" data-id="${esc(f.id)}" type="button">다시 해 보기</button>` : ''}</li>`).join('')}</ul>` : ''}
+        ${pastExp.length ? `<h3 class="gr-h">지난 실험</h3><ul class="fit-list past">${pastExp.map((f) => `<li><span>${esc(f.text)}</span><span class="muted small">${f.rating === 'no' ? '효과 없음' : '모르겠음'}</span></li>`).join('')}</ul>` : ''}
+      </section>
+
+      <section class="card">
+        <div class="sec-head"><h2>주간 회고</h2>${wk && !U.weekReviews[wk] ? `<button class="btn small primary" data-act="week-review" data-k="${wk}" type="button">${wkLabel(wk)} 쓰기</button>` : ''}</div>
+        ${thisWeekOne() ? `<p class="gr-one">이번 주 한 가지 <b>${esc(thisWeekOne())}</b></p>` : ''}
+        ${wkeys.length ? `<div class="rv-list">${more('w', wkeys, 4).map((k) => { const r = U.weekReviews[k]; return `<button class="rv-item" data-act="week-review" data-k="${k}" type="button"><span class="rv-d">${wkLabel(k)}</span><span class="rv-b">${esc(r.good)}</span><span class="rv-n">다음 주 · ${esc(r.next)}${r.prevKept ? ` <i class="rv-res ${r.prevKept}">지난주 ${KEPT_TXT[r.prevKept]}</i>` : ''}</span></button>`; }).join('')}</div>${moreBtn('w', wkeys, 4)}` : '<p class="muted small">일요일부터 수요일까지 쓰면 경험치를 받아요.</p>'}
+      </section>
+
+      <section class="card">
+        <div class="sec-head"><h2>월간 회고</h2>${mWritable ? `<button class="btn small primary" data-act="month-review" data-k="${mWritable}" type="button">${mkLabel(mWritable)} 쓰기</button>` : ''}</div>
+        ${thisMonthChange() ? `<p class="gr-one">이번 달 다짐 <b>${esc(thisMonthChange())}</b></p>` : ''}
+        ${mkeys.length ? `<div class="rv-list">${more('m', mkeys, 3).map((k) => { const r = U.monthReviews[k]; return `<button class="rv-item" data-act="month-review" data-k="${k}" type="button"><span class="rv-d">${k.split('-')[0]}년 ${mkLabel(k)}</span><span class="rv-b">${esc(r.best)}</span><span class="rv-n">바꿀 것 · ${esc(r.change)}</span></button>`; }).join('')}</div>${moreBtn('m', mkeys, 3)}` : '<p class="muted small">매달 1~7일에 지난달을 돌아봐요.</p>'}
+      </section>
+
+      ${exRv.length ? `<section class="card"><h2 style="margin-bottom:12px">시험 회고</h2><div class="rv-list">${exRv.map((e) => `<div class="rv-item static"><span class="rv-d">${esc(e.name)}</span><span class="rv-b">${esc(e.review.good)}</span><span class="rv-n">다음 시험의 나에게 · ${esc(e.review.note)}</span></div>`).join('')}</div></section>` : ''}
+
+      <section class="card">
+        <div class="sec-head"><h2>미래의 나에게</h2>${sl.length < LETTER_OPEN_MAX ? `<button class="btn small primary" data-act="letter-new" type="button">${ICON.plus}편지 쓰기</button>` : ''}</div>
+        ${sl.length ? `<ul class="lt-list">${sl.map((l) => { const dd = Math.max(0, Math.ceil((l.openAt - now()) / DAY)); return `<li class="sealed"><span class="lt-ic">✉</span><span class="lt-info"><b>${dd ? `${dd}일 뒤 열려요` : '오늘 열려요'}</b><small>${md(l.at)}에 씀 · ${md(l.openAt)}</small></span>${l.openAt <= now() ? `<button class="btn small primary" data-act="letter-open" data-id="${esc(l.id)}" type="button">열기</button>` : `<button class="icon-btn small" data-act="letter-del" data-id="${esc(l.id)}" type="button" aria-label="지우기">${ICON.x}</button>`}</li>`; }).join('')}</ul>` : ''}
+        ${opened.length ? `<h3 class="gr-h">받은 편지</h3><ul class="lt-list">${more('l', opened, 3).map((l) => `<li><span class="lt-ic open">✉</span><span class="lt-info"><b>${md(l.at)}의 나</b><small>${md(l.openedAt)}에 받음</small></span><button class="btn small ghost" data-act="letter-open" data-id="${esc(l.id)}" type="button">읽기</button></li>`).join('')}</ul>${moreBtn('l', opened, 3)}` : ''}
+        ${!sl.length && !opened.length ? '<p class="muted small">정한 날까지 열 수 없어요. 그날 지금의 나와 비교해 드려요.</p>' : ''}
+      </section>`;
   }
 
   /* ====================== 클릭 처리 ====================== */
@@ -2632,8 +3822,52 @@
       case 'del-pledge': return delPledge(el.dataset.k, el.dataset.id);
       case 'add-goal': return openGoalSheet();
       case 'edit-goal': return openGoalSheet(el.dataset.id);
-      case 'edit-journal': ui.editJournal = true; return renderHome();
+      case 'edit-journal': ui.editJournal = true; ui.score = null; return renderHome();
       case 'save-journal': return saveJournal();
+      case 'j-day': if ($('journal-input')) $('journal-input').value = ''; ui.jDay = el.dataset.v; ui.editJournal = false; ui.score = null; return renderHome();
+      case 'q-alt': el.disabled = true; await setDaily(el.dataset.k, { qAlt: 1 }); return renderHome();
+
+      // v1.7.0 집중
+      case 'focus-start': return startFocus(+el.dataset.m);
+      case 'focus-custom': return openFocusCustom();
+      case 'focus-sub':
+        ui.focusSub = ui.focusSub === el.dataset.v ? '' : el.dataset.v;
+        try { localStorage.setItem('focusfill_focus_sub', ui.focusSub); } catch (e) {}
+        return renderHome();
+      case 'focus-pause': return toggleFocusPause();
+      case 'focus-open': return focusUi(true);
+      // 회고 · 성장
+      case 'week-review': return openWeekReview(el.dataset.k);
+      case 'month-review': return openMonthReview(el.dataset.k);
+      case 'er-save': el.disabled = true; return saveEndReview(el.dataset.k, false).finally(() => { el.disabled = false; });
+      case 'er-skip': return saveEndReview(el.dataset.k, true);
+      case 'ex-save': el.disabled = true; return saveExamReview(el.dataset.id, false).finally(() => { el.disabled = false; });
+      case 'ex-skip': return saveExamReview(el.dataset.id, true);
+      case 'ls-rv': el.disabled = true; return lessonReview(el.dataset.cat, el.dataset.id, el.dataset.v);
+      case 'exp-new': return openExpSheet('');
+      case 'exp-rate': el.disabled = true; return rateExp(el.dataset.v);
+      case 'exp-stop': return stopExp();
+      case 'exp-again': { const x = (U.experiments || []).find((e) => e.id === el.dataset.id); return openExpSheet(x ? x.text : ''); }
+      case 'letter-new': return openLetterWrite();
+      case 'letter-open': return openLetter(el.dataset.id);
+      case 'letter-del':
+        return confirmSheet('편지를 지울까요?', '아직 열지 않은 편지예요. 지우면 되돌릴 수 없어요.', '지우기', async () => {
+          try { await saveUser({ letters: U.letters.filter((l) => l.id !== el.dataset.id) }); } catch (e) {}
+          refreshViews();
+        });
+      case 'why-add': return addWhy(el.dataset.src);
+      case 'why-later': try { await saveUser({ whyAsked: true }); } catch (e) {} return renderHome();
+      case 'why-del': try { await saveUser({ whys: U.whys.filter((_, i) => i !== +el.dataset.i) }); } catch (e) {} return refreshViews();
+      case 'grow-more': ui.growAll[el.dataset.k] = !ui.growAll[el.dataset.k]; return renderRecords();
+      case 'add-subject': {
+        const v = ($('set-subject').value || '').trim();
+        if (!v || U.subjects.includes(v)) return;
+        if (U.subjects.length >= 12) return toast('과목은 12개까지예요');
+        return settingsUpdate({ subjects: [...U.subjects, v] });
+      }
+      case 'del-subject': return settingsUpdate({ subjects: U.subjects.filter((_, i) => i !== +el.dataset.i) });
+      case 'backup-export': return exportBackup();
+      case 'backup-import': return pickImport();
 
       case 'copy-code':
         try { await navigator.clipboard.writeText(U.friendCode); toast('친구 코드를 복사했어요'); } catch (e) { toast(`코드: ${U.friendCode}`); }
@@ -2735,10 +3969,12 @@
   function setupApp() {
     document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => switchTab(t.dataset.tab); });
     document.addEventListener('click', (e) => {
-      const m = e.target.closest('[data-mood]');
-      if (m) {
-        ui.mood = m.dataset.mood;
-        document.querySelectorAll('.mood').forEach((x) => x.classList.toggle('selected', x === m));
+      const si = e.target.closest('#star-in');
+      if (si) {
+        if (now() - starSkip < 400) return;
+        let v = starFromX(si, e.clientX);
+        if (v === 0.5 && ui.score === 0.5) v = 0;
+        setScore(v);
         return;
       }
       const el = e.target.closest('[data-act]');
@@ -2749,13 +3985,33 @@
       const el = e.target.closest('input[data-act]');
       if (el) onToggle(el.dataset.act, el);
     });
+    // 별점: 끌어서 맞추기 (탭은 click에서)
+    let starDrag = null, starSkip = 0;
+    document.addEventListener('pointerdown', (e) => { if (e.target.closest('#star-in')) starDrag = { id: e.pointerId, x0: e.clientX, moved: false }; });
+    document.addEventListener('pointermove', (e) => {
+      if (!starDrag || e.pointerId !== starDrag.id) return;
+      const si = $('star-in');
+      if (!si) return;
+      if (starDrag.moved || Math.abs(e.clientX - starDrag.x0) > 6) { starDrag.moved = true; setScore(starFromX(si, e.clientX)); }
+    });
+    ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, (e) => {
+      if (starDrag && e.pointerId === starDrag.id) { if (starDrag.moved) starSkip = now(); starDrag = null; }
+    }));
+    document.addEventListener('keydown', (e) => {
+      if (!e.target.closest || !e.target.closest('#star-in')) return;
+      const v = ui.score == null ? 0 : ui.score;
+      const nv = { ArrowRight: v + 0.5, ArrowUp: v + 0.5, ArrowLeft: v - 0.5, ArrowDown: v - 0.5, Home: 0, End: 5 }[e.key];
+      if (nv == null) return;
+      e.preventDefault(); setScore(Math.max(0, Math.min(5, nv)));
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || !e.target.id) return;
-      const map = { 'journal-input': 'save-journal', 'friend-code-input': 'add-friend', 'set-nick': 'save-nick', 'set-target': 'add-target', 'set-act': 'add-act', 'set-quote': 'add-quote', 'pledge-input': 'make-pledge' };
+      const map = { 'journal-input': 'save-journal', 'set-subject': 'add-subject', 'friend-code-input': 'add-friend', 'set-nick': 'save-nick', 'set-target': 'add-target', 'set-act': 'add-act', 'set-quote': 'add-quote', 'pledge-input': 'make-pledge' };
       if (map[e.target.id]) { e.preventDefault(); onAction(map[e.target.id], e.target); return; }
       if (e.target.classList.contains('ls-new')) { e.preventDefault(); lessonAdd(e.target.dataset.cat); return; }
       if (e.target.id === 'ls-new-cat') { e.preventDefault(); lessonAddCat(); return; }
       if (e.target.id.startsWith('ls-rename-')) { e.preventDefault(); onAction('ls-rename-save', { dataset: { cat: e.target.id.slice(10) } }); }
+      if (e.target.id === 'why-home' || e.target.id === 'why-grow') { e.preventDefault(); addWhy(e.target.id); }
     });
     // 종료 버튼: 3초 동안 꾹 누르기
     document.addEventListener('pointerdown', (e) => { const g = e.target.closest('.ls-handle'); if (g) lsDragStart(e, g); });
@@ -2803,6 +4059,11 @@
     $('cel-ok').onclick = nextCelebrate;
     $('urge-lose').onclick = () => finishUrge('lose');
     $('urge-win').onclick = () => finishUrge('win');
+    $('fo-pause').onclick = toggleFocusPause;
+    $('fo-stop').onclick = stopFocus;
+    $('fo-min').onclick = () => focusUi(false);
+    $('fo-ok').onclick = () => focusUi(false);
+    try { ui.focusSub = localStorage.getItem('focusfill_focus_sub') || ''; } catch (e) {}
     document.addEventListener('visibilitychange', () => {
       if (document.hidden || !U) return;
       tick();
@@ -2883,8 +4144,9 @@
       stopWatch();
       me = user;
       clearInterval(tickTimer);
-      hide($('urge')); hide($('modal-reset')); closeSheet(); celQueue.length = 0; celOn = false; hide($('celebrate'));
+      hide($('urge')); hide($('modal-reset')); closeSheet(); celQueue.length = 0; celOn = false; hide($('celebrate')); hide($('focus')); showWhyPop(false);
       if (!user) {
+        document.title = BASE_TITLE;
         U = null; F.list = []; F.incoming = []; F.outgoing = []; F.loaded = false;
         setAuthMode('login');
         $('auth-pw').value = ''; $('auth-pw2').value = '';
