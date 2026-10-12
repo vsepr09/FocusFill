@@ -1099,3 +1099,4 @@ textarea:focus { border-color: var(--accent); }
 
 /* v1.6.3 — 레벨 칸을 조금 아래로 */
 @media (min-width: 641px) { .hero .hero-side .lv-widget { margin-top: 12px; } }
+.pl-acts { align-items: center; flex-wrap: wrap; }

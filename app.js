@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.6.5';
+  const APP_VERSION = '1.6.6';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -65,8 +65,6 @@
   const TIER_X = [1, 1.2, 1.5, 2];
   const TIER_MS = [0, 3 * DAY, 7 * DAY, 30 * DAY];
   const ATTEND_REWARDS = [5, 5, 10, 10, 15, 15, 50];
-  const PLEDGE_CHECK_MIN = 13 * 60 + 30;   // 오후 1시 30분부터 다짐 체크
-  const pledgeOpen = (t = now()) => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes() >= PLEDGE_CHECK_MIN; };
   const PLEDGE_MAX = 5, PLEDGE_XP_MAX = 3;
   const GOAL_MAX = 5;
   const EXAM_LEAD_DAYS = 14;   // 시험 시작 2주 전부터 시험 기간
@@ -907,7 +905,6 @@
   /* ====================== 매초 갱신 ====================== */
   let lastDay = dateKey(now());
   let lastHour = new Date().getHours();
-  let lastPledgeOpen = pledgeOpen();
   function tick() {
     if (!U) return;
     const t = now();
@@ -921,8 +918,6 @@
     const dk = dateKey(t);
     if (dk !== lastDay) { lastDay = dk; checkCalm(); checkGoals(); homeRefresh(); }
     const hr = new Date(t).getHours();
-    const po = pledgeOpen(t);
-    if (po !== lastPledgeOpen) { lastPledgeOpen = po; homeRefresh(); }
     if (hr !== lastHour) { lastHour = hr; homeRefresh(); }
   }
   // 글을 쓰는 중이면 지우지 않고, 입력칸에서 나올 때 홈을 새로 그려요 (자정·정각·다짐 체크 시각)
@@ -1322,27 +1317,27 @@
 
   /* ====================== 오늘의 다짐 (여러 개) ====================== */
   const pledgeXpLeft = (k) => PLEDGE_XP_MAX - pledgesOf(k).filter((p) => p.check === 'yes' && p.xp > 0).length;
-  function pledgeRow(k, p, canCheck) {
+  // 다짐은 시간 제한 없이 언제든 체크해요. 오늘 다짐은 체크 전이면 지울 수도 있어요
+  function pledgeRow(k, p, canDelete) {
     const x = 1;
     const xpOk = pledgeXpLeft(k) > 0;
     const state = p.check === 'yes' ? `<span class="pl-state yes">${ICON.check}지켰어요${p.xp ? ` +${p.xp}` : ''}</span>`
       : p.check === 'no' ? '<span class="pl-state no">못 지켰어요</span>'
-        : canCheck ? `<span class="pl-acts"><button class="btn small primary" data-act="check-pledge" data-k="${k}" data-id="${esc(p.id)}" data-v="yes" type="button">지켰어요${xpOk ? ` +${Math.round(XP.check * x)}` : ''}</button>
-            <button class="btn small ghost" data-act="check-pledge" data-k="${k}" data-id="${esc(p.id)}" data-v="no" type="button">못 지켰어요</button></span>`
-          : `<button class="icon-btn small" data-act="del-pledge" data-k="${k}" data-id="${esc(p.id)}" type="button" aria-label="다짐 지우기">${ICON.x}</button>`;
+        : `<span class="pl-acts"><button class="btn small primary" data-act="check-pledge" data-k="${k}" data-id="${esc(p.id)}" data-v="yes" type="button">지켰어요${xpOk ? ` +${Math.round(XP.check * x)}` : ''}</button>
+            <button class="btn small ghost" data-act="check-pledge" data-k="${k}" data-id="${esc(p.id)}" data-v="no" type="button">못 지켰어요</button>${canDelete ? `
+            <button class="icon-btn small" data-act="del-pledge" data-k="${k}" data-id="${esc(p.id)}" type="button" aria-label="다짐 지우기">${ICON.x}</button>` : ''}</span>`;
     return `<li class="pl${p.check ? ' ' + p.check : ''}"><span class="pl-text">${esc(p.text)}</span>${state}</li>`;
   }
   function pledgeCardHtml() {
     const k = dateKey(now()), yk = dateKey(addDays(dayStart(now()), -1));
     const list = pledgesOf(k), ylist = pledgesOf(yk).filter((p) => !p.check);
     const hr = new Date().getHours();
-    const canCheck = pledgeOpen();
     const kept = list.filter((p) => p.check === 'yes').length;
     const left = PLEDGE_MAX - list.length;
     return `<section class="card pledge-card">
-      <div class="sec-head"><h2>오늘의 다짐</h2>${list.length ? `<span class="muted small">${canCheck ? `${kept}/${list.length} 지킴` : '오후 1시 30분부터 체크'}</span>` : ''}</div>
-      ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, true)).join('')}</ul>` : ''}
-      ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, canCheck)).join('')}</ul>` : ''}
+      <div class="sec-head"><h2>오늘의 다짐</h2>${list.length ? `<span class="muted small">${kept}/${list.length} 지킴</span>` : ''}</div>
+      ${ylist.length && hr < 12 ? `<p class="pl-sub">어제 다짐</p><ul class="pl-list">${ylist.map((p) => pledgeRow(yk, p, false)).join('')}</ul>` : ''}
+      ${list.length ? `<ul class="pl-list">${list.map((p) => pledgeRow(k, p, true)).join('')}</ul>` : ''}
       ${left > 0 ? `<div class="pl-add">
         <div class="inline-add"><input id="pledge-input" maxlength="40" placeholder="오늘의 다짐" /><button class="btn primary" data-act="make-pledge" type="button">추가</button></div></div>` : ''}
     </section>`;
