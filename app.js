@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.3';
+  const APP_VERSION = '1.7.4';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -3030,7 +3030,10 @@
 
   const BASE_TITLE = 'FocusFill';
   // 이 창의 이름표: 다른 기기에서 시작한 집중은 그 기기가 먼저 끝내도록 잠깐 기다려요 (경험치 두 번 받지 않게)
-  const DEV_ID = uid6();
+  // 기기 이름표는 이 브라우저에 저장해 둬요 (앱을 다시 열어도 같은 기기로 알아봐서 바로 완료돼요)
+  const DEV_ID = (() => {
+    try { let d = localStorage.getItem('focusfill_dev'); if (!d) { d = uid6(); localStorage.setItem('focusfill_dev', d); } return d; } catch (e) { return uid6(); }
+  })();
   const focusDue = (f) => !f.pausedAt && focusLeft(f) <= 0 && (f.dev === DEV_ID || !f.dev || now() - (f.startAt + f.mins * MIN + (f.pausedMs || 0)) > 20000);
   function renderFocus() {
     const f = U && U.focus;
@@ -3105,6 +3108,7 @@
     checkAchievements();
   }
   let focusBusy = false;
+  // 시간이 다 되면: 화면과 보상을 먼저 바로 보여주고, 저장은 뒤에서 해요 (서버 응답을 기다리지 않아요)
   async function completeFocus() {
     const f = U && U.focus;
     if (!f || focusBusy) return;
@@ -3112,32 +3116,36 @@
     try {
       const end = f.startAt + f.mins * MIN + (f.pausedMs || 0);
       const k = dateKey(end);
-      const late = now() - end > 2 * MIN;   // 앱을 닫아 둔 사이에 끝난 경우
+      const late = now() - end > 2 * MIN;   // 앱을 닫아 둔 사이에 끝난 경우 (소리는 내지 않아요)
       const rec = { start: f.startAt, end, ms: f.mins * MIN, mins: f.mins, subject: f.subject || '', done: true, xp: 0 };
-      let got = 0;
-      if (!S.focus.some((x) => x.id === f.id)) {
-        const used = dailyOf(k).focusXpBase || 0;
-        const base = Math.max(0, Math.min(Math.floor(f.mins / FOCUS_UNIT) * XP.focus, FOCUS_DAY_MAX - used));
+      const fresh = !S.focus.some((x) => x.id === f.id);
+      let got = 0, used = 0, base = 0;
+      if (fresh) {
+        used = dailyOf(k).focusXpBase || 0;
+        base = Math.max(0, Math.min(Math.floor(f.mins / FOCUS_UNIT) * XP.focus, FOCUS_DAY_MAX - used));
         got = Math.round(base * (examOnAt(end) ? EXAM_X : 1));
         rec.xp = got;
-        await db.put(`${userPath()}/focus/${f.id}`, rec);
         S.focus.push({ id: f.id, ...rec });
         S.focus.sort((a, b) => a.start - b.start);
-        if (got) await addXp(got);
-        U.focus = null;
-        await saveDaily(k, { focusXpBase: used + base }, { focus: null, xp: U.xp });
-      } else { U.focus = null; await saveUser({ focus: null }); }
-      savePublic();
-      const o = $('focus');
+        if (got) addXp(got);
+      }
+      U.focus = null;
+      // 1) 화면 먼저
       if (!late) chime();
-      if (o && !o.classList.contains('hidden') && !late) {
+      const o = $('focus');
+      if (o) {
         hide($('fo-run')); show($('fo-done'));
         $('fo-done-sub').textContent = `${rec.subject ? rec.subject + ' · ' : ''}${rec.mins}분 동안 집중했어요.`;
         $('fo-done-xp').textContent = got ? `+${got} XP` : '';
-      } else { hide(o); toast(`집중 ${rec.mins}분 완료!${got ? ` (+${got} XP)` : ''}`); }
+        show(o);
+      }
       renderFocus();
       if (ui.tab === 'home') renderHome(); else renderLevelCard();
-      checkAchievements();
+      // 2) 저장은 뒤에서
+      const saves = fresh
+        ? [db.put(`${userPath()}/focus/${f.id}`, rec), saveDaily(k, { focusXpBase: used + base }, { focus: null, xp: U.xp })]
+        : [saveUser({ focus: null })];
+      Promise.all(saves).catch(() => {}).then(() => { savePublic(); checkAchievements(); });
     } catch (e) {} finally { focusBusy = false; }
   }
   function openFocusCustom() {
@@ -3763,7 +3771,7 @@
     else if (calmDone(d0)) tags.push({ t: '고요한 날', c: 'calm' });
     else if (okDay(d0)) tags.push({ t: '지킨 날', c: 'ok' });
     const st = studyIn(d0, Math.min(d1, now())) + (k === dateKey(now()) ? focusRunMs() : 0);
-    if (st >= MIN) tags.push({ t: `공부 ${fmtDur(st)}`, c: 'st' });
+    if (st >= MIN) tags.push({ t: `공부 ${fmtDur(st)}`, c: 'study' });
     const ps = pledgesOf(k);
     if (ps.length) tags.push({ t: `다짐 ${ps.filter((p) => p.check === 'yes').length}/${ps.length}`, c: '' });
     return tags;
