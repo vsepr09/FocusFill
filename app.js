@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.5';
+  const APP_VERSION = '1.7.6';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -528,7 +528,8 @@
     return {
       getDoc(path) { return Object.prototype.hasOwnProperty.call(c.docs, path) ? clone(c.docs[path]) : undefined; },
       putDoc(path, data) { c.docs[path] = clone(data); later(); },
-      mergeDoc(path, data) { c.docs[path] = deepMerge(c.docs[path], clone(data)); later(); },
+      // 받아 둔 문서가 없으면 합치지 않아요 (일부 칸만 있는 '반쪽 문서'가 생기지 않게)
+      mergeDoc(path, data) { if (!c.docs[path]) return; c.docs[path] = deepMerge(c.docs[path], clone(data)); later(); },
       delDoc(path) { c.docs[path] = null; later(); },
       list(col) {
         if (!c.cols[col]) return undefined;
@@ -569,8 +570,43 @@
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const offline = () => navigator.onLine === false;
     // 읽기: 서버(또는 크롬의 Firestore 저장소)에서 받고, 인터넷이 없거나 오래 걸리면 기기에 저장해 둔 기록으로
-    async function readDoc(path, label) {
+    // 아직 서버에 못 올린 기록(보낼 목록)을 읽은 결과 위에 겹쳐요 → 화면은 항상 내가 마지막으로 한 기록 그대로
+    function overlayDoc(path, v) {
+      store.ops().forEach((op) => {
+        if (op.u !== curUid || op.path !== path) return;
+        if (op.k === 'del') v = null;
+        else if (op.k === 'put') v = JSON.parse(JSON.stringify(op.data));
+        else if (v) v = deepMerge(v, op.data);
+      });
+      return v;
+    }
+    function overlayList(col, list) {
+      const map = new Map(list.map((x) => [x.id, x]));
+      store.ops().forEach((op) => {
+        if (op.u !== curUid || !op.path.startsWith(col + '/')) return;
+        const id = op.path.slice(col.length + 1);
+        if (!id || id.indexOf('/') >= 0) return;
+        if (op.k === 'del') map.delete(id);
+        else if (op.k === 'put') map.set(id, { id, ...JSON.parse(JSON.stringify(op.data)) });
+        else if (map.has(id)) map.set(id, { ...deepMerge(map.get(id), op.data), id });
+      });
+      return [...map.values()];
+    }
+    async function readDoc(path, label, fresh) {
+      return overlayDoc(path, await readDocRaw(path, label, fresh));
+    }
+    async function readList(col, label) {
+      return overlayList(col, await readListRaw(col, label));
+    }
+    async function readDocRaw(path, label, fresh) {
       const cached = store.getDoc(path);
+      if (fresh) {
+        // 서버에서 직접: 이 기기에서 아직 안 올라간 기록이 섞이지 않은 진짜 문서
+        const d = await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, label);
+        const v = d.exists ? d.data() : null;
+        store.putDoc(path, v);
+        return v;
+      }
       if (offline()) {
         if (cached !== undefined) { fromStore = true; return cached; }
         if (idbCache) { try { const d = await withTimeout(fs.doc(path).get({ source: 'cache' }), 4000, label); const v = d.exists ? d.data() : null; store.putDoc(path, v); return v; } catch (e) {} }
@@ -583,7 +619,7 @@
         return v;
       } catch (e) { slowAt = Date.now(); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
     }
-    async function readList(col, label) {
+    async function readListRaw(col, label) {
       const cached = store.list(col);
       if (offline()) {
         if (cached !== undefined) { fromStore = true; return cached; }
@@ -626,7 +662,7 @@
       },
       pending: () => store.ops().filter((op) => op.u === curUid).length,
       stale: () => { const v = fromStore; fromStore = false; return v; },
-      get: (path) => readDoc(path, '기록 읽기'),
+      get: (path, opt) => readDoc(path, '기록 읽기', opt && opt.fresh),
       set: (path, data) => write('set', path, data),
       put: (path, data) => write('put', path, data),
       async add(col, data) { const id = fs.collection(col).doc().id; await write('put', `${col}/${id}`, data); return id; },
@@ -985,6 +1021,10 @@
   // 온보딩은 기존 문서(친구 코드 등)를 살리면서 새로 시작
   let obKeep = {};
   async function finishOnboarding(startAt) {
+    // 안전장치: 이미 설정을 마친 계정이면 절대 덮어쓰지 않아요 (기록이 지워지지 않게)
+    let ex = null;
+    try { ex = await db.get(userPath(), { fresh: true }); } catch (e) { try { ex = await db.get(userPath()); } catch (er) { ex = null; } }
+    if (ex && ex.onboarded) { toast('이미 설정을 마친 계정이에요. 기록을 불러올게요', null, 3000); setTimeout(() => location.reload(), 1200); return; }
     const ordered = obAllTargets().filter((t) => ob.targets.includes(t));
     const data = {
       ...obKeep,
@@ -1052,7 +1092,8 @@
     if (!U || !me) return;
     if (firstSnap && db.mode === 'firebase') { firstSnap = false; if (!(db.stale && db.stale()) && JSON.stringify(data && data.startAt) === JSON.stringify(U.startAt) && data && data.xp === U.xp) return; }
     firstSnap = false;
-    if (!data || !data.onboarded) { location.reload(); return; }
+    if (!data || data.onboarded === false) { location.reload(); return; }
+    if (!data.onboarded) return;   // 일부만 온 문서는 무시해요
     U = normalize(data);
     clearTimeout(syncTimer);
     syncTimer = setTimeout(async () => {
@@ -4429,12 +4470,18 @@
       }
       go('screen-loading');
       if ($('load-err')) hide($('load-err'));
-      if (db.replay) { try { db.replay(user.uid); } catch (e) {} }
       const got = await readUserDoc();
       if (me !== user) return;
       if (!got) { showLoadError(() => onUser(user), lastLoadErr); return; }
-      const data = got.data;
-      if (!data || !data.onboarded) {
+      let data = got.data;
+      // 처음 설정 화면은 계정 문서가 정말 없거나, '처음부터 다시'로 지운 경우에만 보여요.
+      // 문서에 onboarded 칸이 없는 건 일부만 읽힌 반쪽 문서라는 뜻 → 서버에서 다시 읽고, 그래도 안 되면 다시 시도 화면
+      if (data && data.onboarded === undefined) {
+        try { data = await db.get(userPath(), { fresh: true }); } catch (e) { data = undefined; }
+        if (me !== user) return;
+        if (!data || data.onboarded === undefined) { showLoadError(() => onUser(user), '계정 정보를 다 받지 못했어요'); return; }
+      }
+      if (!data || data.onboarded === false) {
         obKeep = data ? { friendCode: data.friendCode || '', codeOk: !!data.codeOk, share: data.share } : {};
         await waitLoad();
         resetOnboarding(data && data.nickname); go('screen-onboard'); obShow(); return;
@@ -4442,6 +4489,8 @@
       U = normalize(data);
       try { await loadRecords(true); }
       catch (e) { U = null; showLoadError(() => onUser(user), (e && (e.code || e.message)) || e); return; }
+      // 지난번에 서버에 못 올린 기록은 다 읽은 뒤에 다시 보내요 (먼저 보내면 반쪽 문서가 읽혀요)
+      if (db.replay) { try { db.replay(user.uid); } catch (e) {} }
       await waitLoad();
       if (me !== user) return;
       await enterApp();
