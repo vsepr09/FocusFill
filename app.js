@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.8';
+  const APP_VERSION = '1.7.9';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -614,6 +614,15 @@
         addEventListener('storage', h);
         return () => removeEventListener('storage', h);
       },
+      watchList(col, cb) {
+        const h = (e) => {
+          if (e.key !== KEY || !e.newValue) return;
+          try { s = JSON.parse(e.newValue); } catch (er) { return; }
+          cb(children(col));
+        };
+        addEventListener('storage', h);
+        return () => removeEventListener('storage', h);
+      },
       async list(col) { return children(col); },
       async query(col, field, value) { return children(col).filter((d) => d[field] === value); },
     };
@@ -925,6 +934,16 @@
           cb(overlayDoc(path, v));
         }, () => {});
         return () => { if (watchers[path] === cb) delete watchers[path]; un(); };
+      },
+      // 기록 목록(종료·참기·한 줄·집중)도 실시간으로 받아요. 내 저장이 서버에 확인되는 순간에도 한 번 더 받아요
+      watchList(col, cb) {
+        return fs.collection(col).onSnapshot({ includeMetadataChanges: true }, (snap) => {
+          if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
+          slowAt = 0;
+          const list = docs(snap);
+          store.setList(col, list);
+          cb(overlayList(col, list));
+        }, () => {});
       },
       list: (col) => readList(col, '기록 목록 읽기'),
       async query(col, field, value) { if (offline()) throw new Error('offline'); return docs(await withTimeout(fs.collection(col).where(field, '==', value).get(), 15000, '친구 정보 읽기')); },
@@ -1360,22 +1379,56 @@
     ]);
     // 다른 기기 동기화 중 읽기에 실패하면 지금 기록을 그대로 둬요 (빈 기록으로 덮지 않도록)
     if (!streaks || !urges || !journal || !focus) return;
-    S.focus = focus.filter((f) => f && f.start && f.end).sort((a, b) => a.start - b.start);
-    S.streaks = streaks.sort((a, b) => a.end - b.end);
-    S.urges = urges.sort((a, b) => a.at - b.at);
-    S.journal = {};
-    journal.forEach((j) => { S.journal[j.id] = j; });
+    setRecords('streaks', streaks); setRecords('urges', urges); setRecords('journal', journal); setRecords('focus', focus);
+  }
+  const REC_COLS = ['streaks', 'urges', 'journal', 'focus'];
+  function setRecords(col, list) {
+    list = (list || []).filter((x) => x && typeof x === 'object');
+    if (col === 'focus') S.focus = list.filter((f) => f.start && f.end).sort((a, b) => a.start - b.start);
+    if (col === 'streaks') S.streaks = list.sort((a, b) => a.end - b.end);
+    if (col === 'urges') S.urges = list.sort((a, b) => a.at - b.at);
+    if (col === 'journal') { const j = {}; list.forEach((x) => { j[x.id] = x; }); S.journal = j; }
   }
 
   /* ---------- 다른 기기에서 바뀐 내용 반영 ---------- */
-  let unwatch = null;
+  // 내 문서와 기록 목록을 모두 실시간으로 지켜봐요 → 다른 기기에서 바꾸면 바로 이 화면에도 보여요
+  let unwatch = [];
   let syncTimer = null;
   let firstSnap = true;
-  function stopWatch() { if (unwatch) { try { unwatch(); } catch (e) {} } unwatch = null; firstSnap = true; }
+  function stopWatch() { unwatch.forEach((f) => { try { f(); } catch (e) {} }); unwatch = []; firstSnap = true; clearTimeout(syncTimer); }
   function startWatch() {
     stopWatch();
     if (!db.watch) return;
-    unwatch = db.watch(userPath(), onRemote);
+    unwatch.push(db.watch(userPath(), onRemote));
+    if (db.watchList) REC_COLS.forEach((c) => unwatch.push(db.watchList(`${userPath()}/${c}`, (list) => onRecords(c, list))));
+  }
+  function onRecords(col, list) {
+    if (!U || !me) return;
+    setRecords(col, list);
+    remoteRefresh(false);
+  }
+  // 다른 기기에서 바뀐 내용으로 화면 다시 그리기 (글을 쓰는 중이면 다 쓰고 나서)
+  let viewStale = false;
+  function remoteRefresh(reloadRecs) {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(async () => {
+      if (!U) return;
+      if (reloadRecs) await loadRecords();
+      refreshUi();
+    }, 150);
+  }
+  function refreshUi() {
+    if (!U) return;
+    if (!U.urge && !$('urge').classList.contains('hidden') && !$('urge-main').classList.contains('hidden')) hide($('urge'));
+    if (!U.focus && !$('fo-run').classList.contains('hidden')) focusUi(false);
+    renderFocus();
+    $('top-name').textContent = U.nickname;
+    if (typingNow() || lsDrag || hold) { viewStale = true; return; }
+    viewStale = false;
+    if (ui.tab === 'home') renderHome();
+    if (ui.tab === 'records') renderRecords();
+    if (ui.tab === 'settings') renderSettings();
+    if (ui.tab === 'friends') renderFriends();
   }
   function onRemote(data) {
     if (!U || !me) return;
@@ -1385,20 +1438,7 @@
     if (!data.onboarded) return;   // 일부만 온 문서는 무시해요
     U = normalize(data);
     U.xp = Math.max(0, (U.xp || 0) + pendingXp);   // 아직 저장에 싣지 않은 경험치는 그대로
-    clearTimeout(syncTimer);
-    syncTimer = setTimeout(async () => {
-      if (!U) return;
-      await loadRecords();
-      if (!U.urge && !$('urge').classList.contains('hidden') && !$('urge-main').classList.contains('hidden')) hide($('urge'));
-      if (!U.focus && !$('fo-run').classList.contains('hidden')) focusUi(false);
-      renderFocus();
-      $('top-name').textContent = U.nickname;
-      const typing = document.activeElement && document.activeElement.matches('input, textarea');
-      if (ui.tab === 'home' && !typing) renderHome();
-      if (ui.tab === 'records' && !typing && !lsDrag) renderRecords();
-      if (ui.tab === 'settings' && !typing) renderSettings();
-      if (ui.tab === 'friends') renderFriends();
-    }, 400);
+    remoteRefresh(!db.watchList);
   }
 
   async function enterApp() {
@@ -1462,7 +1502,10 @@
     if (typingNow()) { homeStale = true; return; }
     homeStale = false; renderHome();
   }
-  document.addEventListener('focusout', () => { if (homeStale) setTimeout(() => { if (homeStale && U && !typingNow()) homeRefresh(); }, 0); });
+  document.addEventListener('focusout', () => {
+    if (homeStale) setTimeout(() => { if (homeStale && U && !typingNow()) homeRefresh(); }, 0);
+    if (viewStale) setTimeout(() => { if (viewStale && U && !typingNow()) refreshUi(); }, 0);
+  });
 
   /* ====================== 연속 배수 · 시험 기간 ====================== */
   function tierOf(ms) { let t = 0; TIER_MS.forEach((m, i) => { if (ms >= m) t = i; }); return t; }
@@ -2203,6 +2246,7 @@
     if (cancelled && now() - hold.t0 < 450) toast('종료는 3초 동안 꾹 눌러주세요');
     hold = null;
     showWhyPop(false);
+    if (viewStale) setTimeout(refreshUi, 0);
   }
   function holdDone(el) {
     if (!hold) return;
@@ -4732,10 +4776,17 @@
     $('fo-min').onclick = () => focusUi(false);
     $('fo-ok').onclick = () => focusUi(false);
     try { ui.focusSub = localStorage.getItem('focusfill_focus_sub') || ''; } catch (e) {}
+    // 화면을 다시 켜면(아이패드를 다시 열 때 등) 서버 기록을 한 번 새로 받아요 — 실시간 연결이 잠든 사이 놓친 게 없도록
+    let hiddenAt = 0;
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden || !U) return;
+      if (document.hidden) { hiddenAt = now(); return; }
+      if (!U) return;
       tick();
       if (ui.tab === 'friends') loadFriends();
+      if (hiddenAt && now() - hiddenAt > 15000 && navigator.onLine !== false && db.mode === 'firebase') {
+        const uid = me && me.uid;
+        db.get(userPath(), { fresh: true }).then((d) => { if (U && me && me.uid === uid && d && d.onboarded) { firstSnap = false; onRemote(d); remoteRefresh(true); } }).catch(() => {});
+      }
     });
     const darkMq = matchMedia('(prefers-color-scheme: dark)');
     const onScheme = () => { applyTheme(currentTheme()); if (U && ui.tab === 'home') renderLevelCard(); };
