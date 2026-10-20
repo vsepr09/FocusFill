@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.6';
+  const APP_VERSION = '1.7.7';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -722,7 +722,7 @@
       comebackDone: 0, recordBreaks: 0, maxFriends: 0, wasTop1: false,
       // v1.7.0
       whys: [], whyAsked: false, subjects: [...DEFAULT_SUBJECTS], focus: null,
-      weekReviews: {}, monthReviews: {}, experiments: [], letters: [],
+      weekReviews: {}, monthReviews: {}, examReviews: {}, experiments: [], letters: [],
       lessonBase: 0, lessonSeenDay: '', lessonRvCount: 0, lastBackupAt: 0,
     };
     const out = { ...d, ...u };
@@ -733,6 +733,7 @@
     out.achievements = u.achievements || {};
     out.weekReviews = u.weekReviews || {};
     out.monthReviews = u.monthReviews || {};
+    out.examReviews = u.examReviews && typeof u.examReviews === 'object' ? u.examReviews : {};
     ['whys', 'experiments', 'letters', 'subjects'].forEach((k) => { if (!Array.isArray(out[k])) out[k] = [...d[k]]; });
     out.lessons = Array.isArray(u.lessons) ? u.lessons : [{ id: 'c1', name: '공부', items: [] }, { id: 'c2', name: '인생', items: [] }];
     // 이번 달 목표: 예전 버전(달마다 하나) → 여러 개
@@ -1120,6 +1121,7 @@
     ui.monthOff = U.trackStart < monthRange(monthKey(now()))[0] ? 1 : 0;
     ui.recTab = 'report'; ui.year = null;
     F.loaded = false;
+    migrateExamReviews();
     switchTab('home');
     startTick();
     if (U.urge && isActive()) openUrge(true);
@@ -2129,7 +2131,7 @@
       weekReviews: wk.length, weekRun: best,
       oneKept: Object.values(U.weekReviews).filter((r) => r.prevKept === 'yes').length,
       monthReviews: Object.keys(U.monthReviews).length,
-      examReviews: U.exams.filter((e) => e.review).length,
+      examReviews: U.exams.filter((e) => { const r = exRvOf(e); return r && !r.skip; }).length,
       exps: (U.experiments || []).filter((x) => x.doneAt && x.days >= EXP_XP_MIN).length,
       fits: fitsList().filter((x) => x.days >= EXP_XP_MIN).length,
       lessonRv: U.lessonRvCount || 0,
@@ -2908,7 +2910,7 @@
       await Promise.all(docs.map((d) => db.del(`${base}/${col}/${d.id}`)));
     }
     const t = now();
-    const keepKeys = ['nickname', 'gender', 'targets', 'activities', 'urgeMinutes', 'quotes', 'share', 'riskOn', 'friendCode', 'codeOk', 'lessons', 'createdAt', 'whys', 'whyAsked', 'subjects', 'lessonBase', 'lastBackupAt'];
+    const keepKeys = ['nickname', 'gender', 'targets', 'activities', 'urgeMinutes', 'quotes', 'share', 'riskOn', 'friendCode', 'codeOk', 'lessons', 'createdAt', 'whys', 'whyAsked', 'subjects', 'lessonBase', 'lastBackupAt', 'examReviews'];
     const data = { onboarded: true, startAt: t, trackStart: t, rewardFrom: t, endedAt: null, lastDur: 0, bestMs: 0, xp: 0, xpHours: 0, badges: {}, urgeWins: 0, urge: null, multFloor: 0, balanceSeen: '1.6.0', focus: null };
     keepKeys.forEach((k) => { if (U[k] !== undefined) data[k] = U[k]; });
     // 아직 안 열린 편지는 남겨요
@@ -3425,9 +3427,41 @@
   }
 
   /* ---------- 시험 회고 ---------- */
+  // v1.7.7: 시험 회고는 exams 배열이 아니라 examReviews 맵에 따로 저장해요.
+  // (배열은 통째로 덮어써져서, 다른 기기·오래된 화면이 exams를 저장하면 회고가 지워질 수 있었어요)
+  const exSig = (e) => `${e.name}|${e.start}|${e.end}`;
+  function exRvOf(e) {
+    const m = U.examReviews || {};
+    if (m[e.id]) return m[e.id];
+    const sig = exSig(e);
+    const hit = Object.values(m).find((r) => r && r.sig === sig);
+    if (hit) return hit;
+    if (e.review) return e.review;
+    if (e.reviewSkip) return { skip: true };
+    return null;
+  }
+  // 예전 버전에서 배열에 저장된 회고를 맵으로 옮기고, 지워진 회고는 업적 기록으로 되살려요
+  function migrateExamReviews() {
+    const add = {};
+    U.exams.forEach((e) => {
+      if ((U.examReviews || {})[e.id]) return;
+      if (e.review) add[e.id] = { ...e.review, sig: exSig(e) };
+      else if (e.reviewSkip) add[e.id] = { skip: true, at: 0, sig: exSig(e) };
+    });
+    // 첫 시험 회고 업적은 받았는데 남아 있는 회고가 하나도 없으면: 그때 회고할 수 있던 시험을 '작성함'으로 표시
+    const t = (U.achievements || {}).gex1;
+    const all = { ...(U.examReviews || {}), ...add };
+    if (isNum(t) && !Object.values(all).some((r) => r && !r.skip) && !U.exams.some((e) => e.review)) {
+      const cand = U.exams.map((e) => ({ e, st: examStatus(e) }))
+        .filter(({ e, st }) => !all[e.id] && st.pe <= t && t < addDays(st.pe, 14))
+        .sort((a, b) => b.st.pe - a.st.pe)[0];
+      if (cand) add[cand.e.id] = { good: '', note: '', at: t, xp: 0, lost: true, sig: exSig(cand.e) };
+    }
+    if (Object.keys(add).length) saveUser({ examReviews: { ...(U.examReviews || {}), ...add } }).catch(() => {});
+  }
   function examReviewDue() {
     return U.exams.map((e) => ({ e, st: examStatus(e) }))
-      .filter(({ e, st }) => st.state === 'over' && !e.review && !e.reviewSkip && now() < addDays(st.pe, 14) && st.pe > U.trackStart)
+      .filter(({ e, st }) => st.state === 'over' && !exRvOf(e) && now() < addDays(st.pe, 14) && st.pe > U.trackStart)
       .sort((a, b) => a.st.pe - b.st.pe)[0] || null;
   }
   function examCmp(st) {
@@ -3457,12 +3491,12 @@
   }
   async function saveExamReview(id, skip) {
     const e = U.exams.find((x) => x.id === id);
-    if (!e || e.review || e.reviewSkip) return;
-    if (skip) { await saveUser({ exams: U.exams.map((x) => (x.id === id ? { ...x, reviewSkip: true } : x)) }).catch(() => {}); return renderHome(); }
+    if (!e || exRvOf(e)) return;
+    if (skip) { await saveUser({ examReviews: { ...U.examReviews, [id]: { skip: true, at: now(), sig: exSig(e) } } }).catch(() => {}); return renderHome(); }
     const good = ($('ex-good').value || '').trim(), note = ($('ex-note').value || '').trim();
     if (!good || !note) { toast('두 질문 모두 적어주세요'); return; }
     const got = await gainFixed(XP.examReview);
-    try { await saveUser({ exams: U.exams.map((x) => (x.id === id ? { ...x, review: { good, note, at: now(), xp: got } } : x)), xp: U.xp }); } catch (err) {}
+    try { await saveUser({ examReviews: { ...U.examReviews, [id]: { good, note, at: now(), xp: got, sig: exSig(e) } }, xp: U.xp }); } catch (err) {}
     savePublic();
     toast(`시험 회고를 남겼어요 (+${got} XP)`);
     renderHome(); checkAchievements();
@@ -3471,8 +3505,8 @@
   function examNote() {
     const a = activeExam();
     if (!a || a.st.dday > 7) return null;
-    const past = U.exams.filter((e) => e.id !== a.e.id && e.review && e.review.note && examStatus(e).state === 'over').sort((x, y) => y.end.localeCompare(x.end))[0];
-    return past ? { note: past.review.note, name: past.name } : null;
+    const past = U.exams.filter((e) => { const r = exRvOf(e); return e.id !== a.e.id && r && r.note && examStatus(e).state === 'over'; }).sort((x, y) => y.end.localeCompare(x.end))[0];
+    return past ? { note: exRvOf(past).note, name: past.name } : null;
   }
 
   /* ---------- 교훈 다시 보기 ---------- */
@@ -3947,6 +3981,7 @@
       id: ID_RE2.test(c.id) ? c.id : 'c' + uid6(), name: str(c.name, 20) || '교훈',
       items: (Array.isArray(c.items) ? c.items : []).filter((i) => i && typeof i.text === 'string').slice(0, LESSON_MAX).map((i) => ({ id: ID_RE2.test(i.id) ? i.id : 'i' + uid6(), text: str(i.text, 80), ...(isNum(i.at) ? { at: i.at } : {}), rv: Math.max(0, Math.min(LESSON_RV.length, Math.floor(numOr(i.rv, 0)))), ...(isNum(i.learned) ? { learned: i.learned } : {}) })),
     }));
+    o.examReviews = pickObj(u.examReviews, ID_RE2, (r) => (r && typeof r === 'object' ? { ...(r.skip ? { skip: true } : { good: str(r.good, 80), note: str(r.note, 60), xp: numOr(r.xp, 0) }), ...(r.lost ? { lost: true } : {}), at: numOr(r.at, 0), sig: str(r.sig, 60) } : null));
     o.weekReviews = pickObj(u.weekReviews, DK_RE, (r) => (r && typeof r === 'object' ? { good: str(r.good, 200), next: str(r.next, 40), prevKept: ['yes', 'half', 'no'].includes(r.prevKept) ? r.prevKept : null, at: numOr(r.at, 0), xp: numOr(r.xp, 0) } : null));
     o.monthReviews = pickObj(u.monthReviews, MK_RE, (r) => (r && typeof r === 'object' ? { best: str(r.best, 200), regret: str(r.regret, 200), change: str(r.change, 40), at: numOr(r.at, 0), xp: numOr(r.xp, 0) } : null));
     o.experiments = (Array.isArray(u.experiments) ? u.experiments : []).filter((x) => x && Number.isInteger(x.days) && x.days >= 1 && x.days <= 90 && isNum(x.start) && isNum(x.end)).map((x) => ({
@@ -4062,7 +4097,7 @@
     const pmk = prevMonthKey(monthKey(now()));
     const mWritable = !U.monthReviews[pmk] && U.trackStart < monthRange(pmk)[1] ? pmk : null;
     const mkeys = Object.keys(U.monthReviews).sort().reverse();
-    const exRv = U.exams.filter((e) => e.review).sort((a, b) => b.end.localeCompare(a.end));
+    const exRv = U.exams.filter((e) => { const r = exRvOf(e); return r && r.good; }).sort((a, b) => b.end.localeCompare(a.end)).map((e) => ({ name: e.name, review: exRvOf(e) }));
     const sl = sealed().sort((a, b) => a.openAt - b.openAt);
     const opened = (U.letters || []).filter((l) => l.openedAt).sort((a, b) => b.openedAt - a.openedAt);
     const more = (key, list, n) => (ui.growAll[key] ? list : list.slice(0, n));
