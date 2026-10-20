@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.7';
+  const APP_VERSION = '1.7.8';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -397,6 +397,166 @@
     Object.keys(b || {}).forEach((k) => { out[k] = isPlain(b[k]) && isPlain(out[k]) ? deepMerge(out[k], b[k]) : b[k]; });
     return out;
   }
+  const jclone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
+
+  /* ---------- 동기화 규칙 (v1.7.8) ----------
+     내 문서(focusfill_users/{uid})는 '칸' 단위로 저장해요. 칸마다 마지막으로 저장한 시각(_t)을 남겨 두고,
+     내가 보고 있던 값이 그사이 다른 기기에서 바뀌었으면 그 저장은 버려요 → 오래된 화면·늦게 보낸 저장이 새 기록을 지우지 않아요.
+     경험치는 '지금 값'이 아니라 '얼마나 더할지'로 보내서, 어떤 순서로 저장돼도 줄어들지 않아요.
+     저장마다 이름표(_ops)를 남겨서 같은 저장이 두 번 들어가지 않아요. */
+  const UNIT_DEPTH = { daily: 3, badges: 2, achievements: 2, monthGoals: 2, weekReviews: 2, monthReviews: 2, examReviews: 2 };
+  const SYS_KEYS = ['_t', '_w', '_ops', '_ep', 'xp'];
+  const DEL = { __del: true };
+  const isUserDocPath = (p) => /^focusfill_users\/[^/]+$/.test(p);
+  const isNumber = (v) => typeof v === 'number' && isFinite(v);
+  function unitsOf(data) {
+    const out = [];
+    const walk = (path, v, depth) => {
+      if (depth > 1 && isPlain(v)) { Object.keys(v).forEach((k) => walk([...path, k], v[k], depth - 1)); return; }
+      out.push({ path, key: path.join('|'), v });
+    };
+    Object.keys(data || {}).forEach((k) => { if (!SYS_KEYS.includes(k)) walk([k], data[k], UNIT_DEPTH[k] || 1); });
+    return out;
+  }
+  function getIn(o, path) { let x = o; for (const k of path) { if (!isPlain(x)) return undefined; x = x[k]; } return x; }
+  function setIn(o, path, v) {
+    let x = o;
+    for (let i = 0; i < path.length - 1; i++) { if (!isPlain(x[path[i]])) x[path[i]] = {}; x = x[path[i]]; }
+    const last = path[path.length - 1];
+    if (v === DEL) delete x[last]; else x[last] = jclone(v);
+  }
+  // 목록처럼 여러 항목이 모인 칸은, 두 기기가 같은 칸을 바꿨으면 버리지 않고 '내가 바꾼 부분'만 서버 값에 합쳐요
+  const MERGE_RULES = [
+    [/^daily\|[^|]+\|pledges$/, 'ids'], [/^daily\|[^|]+\|pledgeXpCount$/, 'count'], [/^monthGoals\|[^|]+$/, 'ids'],
+    [/^(experiments|letters|exams)$/, 'ids'], [/^(whys|quotes|activities|targets|subjects)$/, 'strs'], [/^lessons$/, 'lessons'],
+  ];
+  const mergeKind = (key) => (MERGE_RULES.find(([re]) => re.test(key)) || [])[1];
+  // base: 내가 바꾸기 전 값, mine: 내가 바꾼 값, theirs: 지금 서버 값
+  function merge3(kind, base, mine, theirs) {
+    if (kind === 'count') return Math.max(0, (isNumber(theirs) ? theirs : 0) + (isNumber(mine) ? mine : 0) - (isNumber(base) ? base : 0));
+    const B = Array.isArray(base) ? base : [], M = Array.isArray(mine) ? mine : [], T = Array.isArray(theirs) ? theirs : [];
+    if (kind === 'strs') {
+      const del = B.filter((x) => !M.includes(x)), add = M.filter((x) => !B.includes(x));
+      const out = T.filter((x) => !del.includes(x));
+      add.forEach((x) => { if (!out.includes(x)) out.push(x); });
+      return out;
+    }
+    const idOf_ = (x) => (x && typeof x === 'object' ? x.id : undefined);
+    const bm = new Map(B.filter(idOf_).map((x) => [x.id, x])), mm = new Map(M.filter(idOf_).map((x) => [x.id, x]));
+    const out = [];
+    T.forEach((t) => {
+      const id = idOf_(t);
+      if (id === undefined) { out.push(t); return; }
+      if (bm.has(id) && !mm.has(id)) return;   // 내가 지운 것
+      const m = mm.get(id), b = bm.get(id);
+      if (m && b && stableStr(m) !== stableStr(b)) {   // 내가 바꾼 것
+        out.push(kind === 'lessons' ? { ...t, ...m, name: m.name !== b.name ? m.name : t.name, items: merge3('ids', b.items, m.items, t.items) } : m);
+      } else out.push(t);
+    });
+    M.forEach((m) => { const id = idOf_(m); if (id !== undefined && !bm.has(id) && !T.some((t) => idOf_(t) === id)) out.push(m); });
+    return out;
+  }
+  let lastOpAt = 0;
+  function newOp(k, path, data, uid, view, meta) {
+    const at = Math.max(Date.now(), lastOpAt + 1);
+    lastOpAt = at;
+    const op = { id: 'o' + at.toString(36) + Math.random().toString(36).slice(2, 7), k, path, data: data == null ? null : jclone(data), at, u: uid };
+    if (isUserDocPath(path) && k !== 'del') {
+      op.ep = (view && view._ep) || '';
+      if (k === 'put') op.nep = 'e' + at.toString(36) + Math.random().toString(36).slice(2, 6);
+      else {
+        op.bw = (view && view._w) || 0;
+        const T = (view && view._t) || {};
+        op.base = {}; op.bv = {};
+        unitsOf(op.data).forEach((u) => {
+          if (T[u.key] !== undefined) op.base[u.key] = T[u.key];
+          if (mergeKind(u.key)) { const bv = getIn(view, u.path); op.bv[u.key] = bv === undefined ? null : jclone(bv); }
+        });
+        const m = meta || {};
+        if (m.xpAdd) op.xpAdd = m.xpAdd;
+        if (m.xpMin) op.xpMin = m.xpMin;
+        if (Array.isArray(m.guard)) op.guard = m.guard;
+      }
+    }
+    return op;
+  }
+  // 서버 문서(srv)에 저장(op)을 어떻게 넣을지 정해요. 서버·기기 모두 이 규칙 하나를 써요
+  function planUserOp(srv, op) {
+    const legacy = !op.id;   // v1.7.7 이전 앱이 남긴 저장: 비어 있는 칸만 채워요
+    if (op.k === 'put') {
+      if (srv && srv._ops && srv._ops[op.id]) return { skip: 'dup' };
+      if (legacy && srv) return { skip: 'legacy' };
+      const doc = jclone(op.data) || {};
+      ['_t', '_w', '_ops', '_ep'].forEach((k) => { delete doc[k]; });
+      Object.assign(doc, { _ep: op.nep || '', _t: {}, _w: op.at, _ops: op.id ? { [op.id]: op.at } : {} });
+      return { put: doc, doc };
+    }
+    if (!srv) return { skip: 'nodoc' };
+    if (!legacy && srv._ops && srv._ops[op.id]) return { skip: 'dup' };
+    if (!legacy && (srv._ep || '') !== (op.ep || '')) return { skip: 'epoch' };
+    const T = srv._t || {};
+    const ok = [], bad = [];
+    let soft = false;   // 합쳐서 넣은 칸이 있는지
+    unitsOf(op.data).forEach((u) => {
+      let conflict;
+      if (legacy) conflict = getIn(srv, u.path) !== undefined;
+      else {
+        const s = T[u.key], b = (op.base || {})[u.key];
+        conflict = s !== undefined || b !== undefined ? s !== b : (srv._w || 0) !== (op.bw || 0);
+      }
+      if (!conflict) { ok.push(u); return; }
+      if (legacy) { bad.push(u); return; }
+      const sv = getIn(srv, u.path);
+      if (stableStr(sv) === stableStr(u.v)) { soft = true; return; }   // 이미 같은 값 → 할 일 없음 (같은 보상을 두 기기가 받은 경우도)
+      const kind = mergeKind(u.key);
+      if (kind && op.bv && Object.prototype.hasOwnProperty.call(op.bv, u.key)) { ok.push({ ...u, v: merge3(kind, op.bv[u.key], u.v, sv), merged: true }); soft = true; return; }
+      bad.push(u);
+    });
+    const guard = op.guard || ['*'];
+    if (!legacy && bad.some((u) => guard.some((g) => g === '*' || u.key === g || u.key.startsWith(g + '|')))) return { skip: 'conflict' };
+    const upd = [];
+    // 합친 칸은 시각을 조금 다르게 남겨요 → 이 기기의 다음 저장도 '합쳐진 값'을 기준으로 다시 합쳐져요
+    ok.forEach((u) => { upd.push([u.path, u.v]); if (!legacy) upd.push([['_t', u.key], u.merged ? op.at + 0.5 : op.at]); });
+    const x0 = isNumber(srv.xp) ? srv.xp : 0;
+    let x = x0;
+    // 경험치는 내가 본 그대로 저장될 때만 더해요 (다른 기기와 겹친 보상을 두 번 받지 않게)
+    if (!legacy && op.xpAdd && !soft && !bad.length) x = Math.max(0, x + op.xpAdd);
+    if (!legacy && op.xpMin && x < op.xpMin) x = op.xpMin;
+    if (x !== x0) upd.push([['xp'], x]);
+    if (!upd.length) return { skip: bad.length ? 'conflict' : 'empty' };
+    if (!legacy) {
+      upd.push([['_w'], op.at], [['_ops', op.id], op.at]);
+      const o1 = op.at - 16 * DAY, d1 = op.at - 40 * DAY, now_ = new Set(ok.map((u) => u.key));
+      Object.keys(srv._ops || {}).forEach((id) => { if (!(srv._ops[id] > o1)) upd.push([['_ops', id], DEL]); });
+      Object.keys(T).forEach((key) => { const mm = /^daily\|(\d{4}-\d{2}-\d{2})\|/.exec(key); if (mm && !now_.has(key) && new Date(mm[1] + 'T00:00:00').getTime() < d1) upd.push([['_t', key], DEL]); });
+    }
+    const doc = jclone(srv);
+    upd.forEach(([p, v]) => setIn(doc, p, v));
+    return { upd, doc, partial: bad.length > 0 || soft };
+  }
+  // 아직 서버에 안 올라간 저장을 화면용으로 미리 겹쳐요 (성공한다고 보고)
+  function applyOpLocal(v, op) {
+    if (op.k === 'del') return null;
+    if (isUserDocPath(op.path)) {
+      if (!op.id) return v;   // 예전 앱이 남긴 저장은 서버에서 확인된 뒤에 보여요
+      if (v && v._ops && v._ops[op.id]) return v;   // 이미 서버에 들어간 저장
+      if (op.k === 'put') return planUserOp(null, op).doc;
+      if (!v) return v;
+      const d = jclone(v);
+      unitsOf(op.data).forEach((u) => { setIn(d, u.path, u.v); setIn(d, ['_t', u.key], op.at); });
+      if (op.xpAdd) d.xp = Math.max(0, (d.xp || 0) + op.xpAdd);
+      if (op.xpMin && (d.xp || 0) < op.xpMin) d.xp = op.xpMin;
+      d._w = op.at;
+      return d;
+    }
+    if (op.k === 'put') return jclone(op.data);
+    return deepMerge(v || {}, op.data);
+  }
+  function stableStr(o) {
+    if (Array.isArray(o)) return '[' + o.map(stableStr).join(',') + ']';
+    if (isPlain(o)) return '{' + Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + stableStr(o[k])).join(',') + '}';
+    return JSON.stringify(o === undefined ? null : o);
+  }
 
   // 테스트 모드: 모든 데이터를 이 브라우저에만 저장 (여러 계정 테스트 가능)
   function LocalBackend() {
@@ -430,8 +590,18 @@
       },
       async signOut() { s.session = null; save(); listener(null); },
       async get(path) { return s.docs[path] ? clone(s.docs[path]) : null; },
-      async set(path, data) { s.docs[path] = deepMerge(s.docs[path], clone(data)); save(); },
-      async put(path, data) { s.docs[path] = clone(data); save(); },
+      async set(path, data, meta) {
+        if (isUserDocPath(path)) {
+          const r = planUserOp(s.docs[path] || null, newOp('set', path, data, s.session, s.docs[path], meta));
+          if (r.doc) { s.docs[path] = r.doc; save(); }
+          return;
+        }
+        s.docs[path] = deepMerge(s.docs[path], clone(data)); save();
+      },
+      async put(path, data) {
+        s.docs[path] = isUserDocPath(path) ? planUserOp(null, newOp('put', path, data, s.session, s.docs[path], null)).doc : clone(data);
+        save();
+      },
       async add(col, data) { const id = uid6(); s.docs[col + '/' + id] = clone(data); save(); return id; },
       async del(path) { delete s.docs[path]; save(); },
       // 다른 탭에서 바뀐 내용 받기 (테스트 모드)
@@ -504,8 +674,8 @@
     } catch (e) {}
   }
 
-  // 기기 저장소: 마지막으로 받은 기록과 아직 서버에 못 올린 기록을 localStorage에 둬요.
-  // Safari는 IndexedDB(Firestore 오프라인 저장)가 멈추는 일이 있어서, 오프라인·느린 연결에서도 이걸로 열려요.
+  // 기기 저장소: 서버에서 마지막으로 받은 기록(그대로)과 아직 서버에 못 올린 저장(보낼 목록)을 localStorage에 둬요.
+  // 화면에는 '받은 기록 + 보낼 목록'을 겹쳐서 보여줘요 → 오프라인·느린 연결에서도 내가 마지막으로 한 그대로 열려요.
   function LocalCache() {
     const KEY = 'focusfill_cache_v1', OUT = 'focusfill_outbox_v1';
     const fresh = () => ({ docs: {}, cols: {} });
@@ -514,6 +684,7 @@
     if (!c || typeof c.docs !== 'object' || typeof c.cols !== 'object') c = fresh();
     try { out = JSON.parse(localStorage.getItem(OUT)); } catch (e) { out = null; }
     if (!Array.isArray(out)) out = [];
+    out = out.filter((op) => op && typeof op.path === 'string' && ['set', 'put', 'del'].includes(op.k));
     let timer = null;
     const flush = () => {
       clearTimeout(timer); timer = null;
@@ -523,26 +694,24 @@
     addEventListener('pagehide', () => { if (timer) flush(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden && timer) flush(); });
     const saveOut = () => { try { localStorage.setItem(OUT, JSON.stringify(out)); } catch (e) {} };
-    const clone = (o) => (o == null ? null : JSON.parse(JSON.stringify(o)));
     const isChild = (p, col) => p.length > col.length + 1 && p.startsWith(col + '/') && p.indexOf('/', col.length + 1) < 0;
     return {
-      getDoc(path) { return Object.prototype.hasOwnProperty.call(c.docs, path) ? clone(c.docs[path]) : undefined; },
-      putDoc(path, data) { c.docs[path] = clone(data); later(); },
-      // 받아 둔 문서가 없으면 합치지 않아요 (일부 칸만 있는 '반쪽 문서'가 생기지 않게)
-      mergeDoc(path, data) { if (!c.docs[path]) return; c.docs[path] = deepMerge(c.docs[path], clone(data)); later(); },
+      getDoc(path) { return Object.prototype.hasOwnProperty.call(c.docs, path) ? jclone(c.docs[path]) : undefined; },
+      putDoc(path, data) { c.docs[path] = jclone(data); later(); },
       delDoc(path) { c.docs[path] = null; later(); },
       list(col) {
         if (!c.cols[col]) return undefined;
-        return Object.keys(c.docs).filter((p) => isChild(p, col) && c.docs[p]).map((p) => ({ id: p.slice(col.length + 1), ...clone(c.docs[p]) }));
+        return Object.keys(c.docs).filter((p) => isChild(p, col) && c.docs[p]).map((p) => ({ id: p.slice(col.length + 1), ...jclone(c.docs[p]) }));
       },
       setList(col, items) {
         Object.keys(c.docs).forEach((p) => { if (isChild(p, col)) delete c.docs[p]; });
-        items.forEach((x) => { const { id, ...rest } = x; c.docs[col + '/' + id] = clone(rest); });
+        items.forEach((x) => { const { id, ...rest } = x; c.docs[col + '/' + id] = jclone(rest); });
         c.cols[col] = 1; later();
       },
       ops: () => out,
       push(op) { out.push(op); saveOut(); },
       done(op) { const k = out.indexOf(op); if (k >= 0) { out.splice(k, 1); saveOut(); } },
+      touch: saveOut,
       clearDocs() { c = fresh(); try { localStorage.removeItem(KEY); } catch (e) {} },
     };
   }
@@ -556,11 +725,11 @@
     const auth = firebase.auth(), fs = firebase.firestore();
     // 학교·공용 와이파이처럼 실시간 연결이 막힌 곳에서도 되도록 자동으로 다른 연결 방식을 써요
     try { fs.settings({ experimentalAutoDetectLongPolling: true, merge: true }); } catch (e) {}
-    // Firestore의 IndexedDB 저장은 Safari(아이패드)에서 멈출 수 있어서 Safari에서는 쓰지 않아요 (v1.5.13에서 찾은 원인).
-    // 대신 아래 LocalCache(localStorage)가 오프라인 기록을 맡아요.
-    const idbCache = !IS_WEBKIT && !idbBroken;
-    if (idbCache) { try { fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {} }
+    // v1.7.8: Firestore 자체 오프라인 저장(IndexedDB)은 쓰지 않아요. 그 저장소는 앱을 다시 열 때 예전에 못 보낸 저장을
+    // 그대로 다시 보내서, 다른 기기에서 더 새로 바뀐 기록(경험치·레벨 등)을 덮어쓸 수 있었어요.
+    // 오프라인 기록은 아래 LocalCache가 맡고, 보낼 때마다 서버의 최신 기록과 맞춰 봐요.
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+    const FV = firebase.firestore.FieldValue, FP = firebase.firestore.FieldPath;
     const store = LocalCache();
     let curUid = '';
     const READ_MS = 6000;
@@ -569,29 +738,26 @@
     let fromStore = false;   // 이번에 연 기록 중 기기 저장소에서 온 게 있는지 (서버와 다시 연결되면 새로 받아요)
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const offline = () => navigator.onLine === false;
-    // 읽기: 서버(또는 크롬의 Firestore 저장소)에서 받고, 인터넷이 없거나 오래 걸리면 기기에 저장해 둔 기록으로
-    // 아직 서버에 못 올린 기록(보낼 목록)을 읽은 결과 위에 겹쳐요 → 화면은 항상 내가 마지막으로 한 기록 그대로
+    const mine = () => store.ops().filter((op) => op.u === curUid);
+    // 읽기: 서버에서 받고, 인터넷이 없거나 오래 걸리면 기기에 저장해 둔 기록으로.
+    // 아직 서버에 못 올린 저장(보낼 목록)을 읽은 결과 위에 겹쳐요 → 화면은 항상 내가 마지막으로 한 그대로
     function overlayDoc(path, v) {
-      store.ops().forEach((op) => {
-        if (op.u !== curUid || op.path !== path) return;
-        if (op.k === 'del') v = null;
-        else if (op.k === 'put') v = JSON.parse(JSON.stringify(op.data));
-        else if (v) v = deepMerge(v, op.data);
-      });
+      mine().forEach((op) => { if (op.path === path) v = applyOpLocal(v, op); });
       return v;
     }
     function overlayList(col, list) {
       const map = new Map(list.map((x) => [x.id, x]));
-      store.ops().forEach((op) => {
-        if (op.u !== curUid || !op.path.startsWith(col + '/')) return;
+      mine().forEach((op) => {
+        if (!op.path.startsWith(col + '/')) return;
         const id = op.path.slice(col.length + 1);
         if (!id || id.indexOf('/') >= 0) return;
-        if (op.k === 'del') map.delete(id);
-        else if (op.k === 'put') map.set(id, { id, ...JSON.parse(JSON.stringify(op.data)) });
-        else if (map.has(id)) map.set(id, { ...deepMerge(map.get(id), op.data), id });
+        const cur = map.has(id) ? (({ id: _i, ...rest }) => rest)(map.get(id)) : null;
+        const nv = applyOpLocal(cur, op);
+        if (nv) map.set(id, { ...nv, id }); else if (op.k === 'del') map.delete(id);
       });
       return [...map.values()];
     }
+    const view = (path) => { const c = store.getDoc(path); return overlayDoc(path, c === undefined ? null : c); };
     async function readDoc(path, label, fresh) {
       return overlayDoc(path, await readDocRaw(path, label, fresh));
     }
@@ -601,19 +767,17 @@
     async function readDocRaw(path, label, fresh) {
       const cached = store.getDoc(path);
       if (fresh) {
-        // 서버에서 직접: 이 기기에서 아직 안 올라간 기록이 섞이지 않은 진짜 문서
+        // 서버에서 직접 받은 진짜 문서
         const d = await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, label);
         const v = d.exists ? d.data() : null;
         store.putDoc(path, v);
         return v;
       }
-      if (offline()) {
-        if (cached !== undefined) { fromStore = true; return cached; }
-        if (idbCache) { try { const d = await withTimeout(fs.doc(path).get({ source: 'cache' }), 4000, label); const v = d.exists ? d.data() : null; store.putDoc(path, v); return v; } catch (e) {} }
-      }
+      if (offline() && cached !== undefined) { fromStore = true; return cached; }
       if (slowNow() && cached !== undefined) { fromStore = true; return cached; }
       try {
-        const d = await withTimeout(fs.doc(path).get(), READ_MS, label);
+        // 기기에 받아 둔 기록이 있으면 오래 기다리지 않아요 (서버 기록은 연결되면 바로 다시 받아요)
+        const d = await withTimeout(fs.doc(path).get({ source: 'server' }), cached !== undefined ? 3500 : READ_MS, label);
         const v = d.exists ? d.data() : null;
         store.putDoc(path, v);
         return v;
@@ -621,29 +785,113 @@
     }
     async function readListRaw(col, label) {
       const cached = store.list(col);
-      if (offline()) {
-        if (cached !== undefined) { fromStore = true; return cached; }
-        if (idbCache) { try { const l = docs(await withTimeout(fs.collection(col).get({ source: 'cache' }), 4000, label)); store.setList(col, l); return l; } catch (e) {} }
-      }
+      if (offline() && cached !== undefined) { fromStore = true; return cached; }
       if (slowNow() && cached !== undefined) { fromStore = true; return cached; }
       try {
-        const list = docs(await withTimeout(fs.collection(col).get(), READ_MS, label));
+        const list = docs(await withTimeout(fs.collection(col).get({ source: 'server' }), cached !== undefined ? 3500 : READ_MS, label));
         store.setList(col, list);
         return list;
       } catch (e) { slowAt = Date.now(); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
     }
-    // 쓰기: 기기 저장소에 바로 적고, 서버에 올라갈 때까지 '보낼 목록'에 남겨 둬요 (앱을 닫아도 다음에 다시 보내요)
-    function send(op) {
+
+    // ---------- 보내기 ----------
+    // 보낼 목록을 하나씩, 순서대로 보내요. 앞의 저장이 확실히 끝나야 다음 저장을 보내요.
+    const waiters = new Map();   // 저장 이름표 → 화면에서 기다리는 약속
+    const watchers = {};
+    const ownW = new Set();      // 이 기기가 서버에 넣은 저장의 시각
+    let pumping = false, retryT = null, wait = 0;
+    // 서버에서 저장이 버려지거나 합쳐졌으면 화면을 서버 기록으로 맞춰요
+    function notify(path) { const cb = watchers[path]; if (cb) setTimeout(() => { const v = view(path); if (v) cb(v); }, 0); }
+    async function exec(op) {
       const ref = fs.doc(op.path);
-      const pr = op.k === 'del' ? ref.delete() : op.k === 'set' ? ref.set(op.data, { merge: true }) : ref.set(op.data);
-      pr.then(() => store.done(op), (e) => { console.warn('저장 실패', e); store.done(op); });
-      return offline() ? Promise.resolve() : Promise.race([pr, new Promise((r) => setTimeout(r, 6000))]);
+      if (isUserDocPath(op.path) && op.k !== 'del') {
+        const r = await fs.runTransaction(async (tx) => {
+          const s = await tx.get(ref);
+          const srv = s.exists ? s.data() : null;
+          const plan = planUserOp(srv, op);
+          if (plan.put) tx.set(ref, plan.put);
+          else if (plan.upd) {
+            const args = [];
+            plan.upd.forEach(([p, v]) => { args.push(new FP(...p), v === DEL ? FV.delete() : v); });
+            tx.update(ref, ...args);
+          }
+          return { plan, srv };
+        });
+        if (r.plan.doc) { store.putDoc(op.path, r.plan.doc); ownW.add(r.plan.doc._w); }
+        else if (r.srv) store.putDoc(op.path, r.srv);
+        if (r.plan.skip === 'conflict' || r.plan.skip === 'epoch' || r.plan.partial) notify(op.path);
+        return;
+      }
+      // 한 줄·친구용 공개 정보: 더 나중에 저장된 게 서버에 있으면 덮어쓰지 않아요
+      if (op.k !== 'del' && op.data && isNumber(op.data.updatedAt)) {
+        const r = await fs.runTransaction(async (tx) => {
+          const s = await tx.get(ref);
+          const srv = s.exists ? s.data() : null;
+          if (srv && isNumber(srv.updatedAt) && srv.updatedAt > op.data.updatedAt) return { srv, skip: true };
+          if (op.k === 'put') tx.set(ref, op.data); else tx.set(ref, op.data, { merge: true });
+          return { srv, skip: false };
+        });
+        store.putDoc(op.path, r.skip ? r.srv : (op.k === 'put' || !r.srv ? op.data : deepMerge(r.srv, op.data)));
+        return;
+      }
+      if (op.k === 'del') { await ref.delete(); store.delDoc(op.path); return; }
+      if (op.k === 'put') { await ref.set(op.data); store.putDoc(op.path, op.data); return; }
+      await ref.set(op.data, { merge: true });
+      const c = store.getDoc(op.path);
+      if (c) store.putDoc(op.path, deepMerge(c, op.data));
     }
-    function write(k, path, data) {
-      if (k === 'del') store.delDoc(path); else if (k === 'set') store.mergeDoc(path, data); else store.putDoc(path, data);
-      const op = { k, path, data: data == null ? null : JSON.parse(JSON.stringify(data)), at: Date.now(), u: curUid || (auth.currentUser ? auth.currentUser.uid : '') };
+    function finish(op, err) {
+      store.done(op);
+      const w = waiters.get(op.id);
+      if (w) { waiters.delete(op.id); if (err) w.rej(err); else w.res(); }
+    }
+    function later() {
+      clearTimeout(retryT);
+      wait = Math.min(60000, wait ? wait * 2 : 2000);
+      retryT = setTimeout(() => { retryT = null; pump(); }, wait);
+    }
+    const NET_ERR = ['unavailable', 'deadline-exceeded', 'aborted', 'resource-exhausted', 'cancelled', 'unknown', 'internal', 'unauthenticated'];
+    const HARD_ERR = ['permission-denied', 'invalid-argument', 'not-found', 'out-of-range', 'unimplemented', 'data-loss'];
+    async function pump() {
+      if (pumping || !curUid) return;
+      pumping = true;
+      clearTimeout(retryT); retryT = null;
+      try {
+        for (;;) {
+          const list = mine();
+          const op = list[0];
+          if (!op) { wait = 0; break; }
+          if (!op.at || Date.now() - op.at > 14 * DAY) { finish(op); continue; }   // 2주 넘게 못 보낸 저장은 버려요
+          // 한 줄·공개 정보처럼 통째로 바뀌는 기록: 뒤에 같은 걸 또 저장했으면 마지막 것만 보내요
+          if (op.k !== 'del' && op.data && isNumber(op.data.updatedAt) && list.some((o) => o !== op && o.path === op.path && o.at > op.at)) { finish(op); continue; }
+          if (offline()) { later(); break; }
+          try {
+            await withTimeout(exec(op), 15000, '저장');
+            finish(op); wait = 0;
+          } catch (e) {
+            const code = e && e.code;
+            const hard = HARD_ERR.includes(code);
+            const slow = !code && e && /초 초과/.test(e.message || '');
+            // 인터넷 문제가 아닌 오류가 계속되면(문서 모양이 이상한 경우 등) 몇 번 뒤 그 저장만 버려요 → 뒤의 저장이 막히지 않게
+            if (!hard && !slow && !NET_ERR.includes(code)) { op.tries = (op.tries || 0) + 1; store.touch(); }
+            if (hard || (op.tries || 0) >= 6) { console.warn('저장 실패', e); finish(op, e); continue; }
+            later(); break;
+          }
+        }
+      } finally { pumping = false; }
+    }
+    function kick(force) { if (force) { clearTimeout(retryT); retryT = null; } if (!pumping && !retryT) pump(); }
+    addEventListener('online', () => kick(true));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) kick(true); });
+    setInterval(() => { if (mine().length) kick(); }, 30000);
+    function write(k, path, data, meta) {
+      const uid = curUid || (auth.currentUser ? auth.currentUser.uid : '');
+      const op = newOp(k, path, data, uid, isUserDocPath(path) ? view(path) : null, meta);
       store.push(op);
-      return send(op);
+      const pr = new Promise((res, rej) => waiters.set(op.id, { res, rej }));
+      pr.catch(() => {});
+      kick();
+      return offline() ? Promise.resolve() : Promise.race([pr, new Promise((r) => setTimeout(r, 6000))]);
     }
     return {
       mode: 'firebase',
@@ -651,31 +899,32 @@
       signUp: (e, p) => auth.createUserWithEmailAndPassword(e, p),
       signIn: (e, p) => auth.signInWithEmailAndPassword(e, p),
       signOut: () => { store.clearDocs(); return auth.signOut(); },
-      // 지난번에 서버에 못 올린 기록을 다시 보내요 (로그인한 사람 것만, 2주 이내)
+      // 지난번에 서버에 못 올린 저장을 보내기 시작해요 (로그인한 사람 것만, 2주 이내)
       replay(uid) {
-        store.ops().slice().forEach((op) => {
-          if (!op.u) { store.done(op); return; }
-          if (op.u !== uid) return;
-          if (Date.now() - op.at > 14 * DAY) { store.done(op); return; }
-          send(op).catch(() => {});
-        });
+        store.ops().slice().forEach((op) => { if (!op.u || (op.u === uid && (!op.at || Date.now() - op.at > 14 * DAY))) store.done(op); });
+        kick(true);
       },
-      pending: () => store.ops().filter((op) => op.u === curUid).length,
+      pending: () => mine().length,
       stale: () => { const v = fromStore; fromStore = false; return v; },
-      get: (path, opt) => readDoc(path, '기록 읽기', opt && opt.fresh),
-      set: (path, data) => write('set', path, data),
+      get: (path, opt) => (opt && opt.raw ? readDocRaw(path, '기록 읽기', true) : readDoc(path, '기록 읽기', opt && opt.fresh)),
+      set: (path, data, meta) => write('set', path, data, meta),
       put: (path, data) => write('put', path, data),
       async add(col, data) { const id = fs.collection(col).doc().id; await write('put', `${col}/${id}`, data); return id; },
       del: (path) => write('del', path, null),
-      // 다른 기기에서 바뀐 내용 받기 (내가 방금 쓴 건 건너뜀)
+      // 다른 기기에서 바뀐 내용 받기 (방금 내가 저장한 그대로면 건너뜀)
       watch(path, cb) {
-        return fs.doc(path).onSnapshot((snap) => {
+        watchers[path] = cb;
+        const un = fs.doc(path).onSnapshot((snap) => {
           if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
           slowAt = 0;   // 서버가 다시 응답해요
           const v = snap.exists ? snap.data() : null;
+          const old = store.getDoc(path);
           store.putDoc(path, v);
-          cb(v);
+          kick();
+          if (v && ownW.has(v._w) && old && stableStr(old) === stableStr(v)) return;
+          cb(overlayDoc(path, v));
         }, () => {});
+        return () => { if (watchers[path] === cb) delete watchers[path]; un(); };
       },
       list: (col) => readList(col, '기록 목록 읽기'),
       async query(col, field, value) { if (offline()) throw new Error('offline'); return docs(await withTimeout(fs.collection(col).where(field, '==', value).get(), 15000, '친구 정보 읽기')); },
@@ -848,9 +1097,25 @@
   }
 
   /* ====================== 저장 ====================== */
-  async function saveUser(fields) {
-    Object.assign(U, fields);
-    try { await db.set(userPath(), fields); }
+  // 화면 쪽 내 문서(U)에도 서버와 똑같은 규칙으로 합쳐요 (맵은 칸끼리 합치고, 나머지는 통째로 바꿔요)
+  function mergeLocal(target, fields) {
+    Object.keys(fields).forEach((k) => {
+      const d = UNIT_DEPTH[k] || 1, v = fields[k];
+      if (d > 1 && isPlain(v)) {
+        const cur = isPlain(target[k]) ? { ...target[k] } : {};
+        Object.keys(v).forEach((kk) => { cur[kk] = d > 2 && isPlain(v[kk]) ? { ...(isPlain(cur[kk]) ? cur[kk] : {}), ...v[kk] } : v[kk]; });
+        target[k] = cur;
+      } else target[k] = v;
+    });
+  }
+  // 경험치는 '얼마나 더했는지'만 보내요. xp 칸이 들어 있는 저장에 그동안 얻은 경험치를 실어 보내요.
+  // meta.guard: 이 칸들이 그사이 다른 기기에서 바뀌었으면 저장 전체를 버려요 (기본: 모든 칸)
+  async function saveUser(fields, meta) {
+    const data = { ...fields };
+    const m = { ...(meta || {}) };
+    if ('xp' in data) { delete data.xp; const n = takeXp(); if (n) m.xpAdd = n; }
+    mergeLocal(U, data);
+    try { await db.set(userPath(), data, m); }
     catch (e) { toast(navigator.onLine === false ? '인터넷이 끊겨 있어요. 연결되면 다시 저장해요.' : '저장하지 못했어요. 다시 시도해 주세요.'); throw e; }
   }
 
@@ -888,9 +1153,12 @@
     pubTimer = setTimeout(run, 800);
   }
 
+  let pendingXp = 0;   // 얻었지만 아직 저장에 싣지 않은 경험치
+  const takeXp = () => { const n = pendingXp; pendingXp = 0; return n; };
   async function addXp(n) {
     const before = levelOf(U.xp);
-    U.xp = (U.xp || 0) + n;
+    U.xp = Math.max(0, (U.xp || 0) + n);
+    pendingXp += n;
     const after = levelOf(U.xp);
     if (after > before) setTimeout(() => softToast(`레벨 업! Lv.${after} ${titleOf(after)}`), 400);
     return after > before;
@@ -1034,11 +1302,25 @@
       bestMs: 0, urgeWins: 0, urge: null, xp: 0, xpHours: 0, badges: {}, onboarded: true, createdAt: now(), balanceSeen: '1.6.0',
     };
     U = normalize(data);
+    pendingXp = 0;
     await db.put(userPath(), U);
     S.streaks = []; S.urges = []; S.journal = {}; S.focus = [];
     obKeep = {};
     await enterApp();
     openGuide(true);
+  }
+
+  /* ====================== 레벨 되찾기 (v1.7.8) ====================== */
+  // 예전 버전의 동기화 문제로 경험치가 줄어든 경우: 이미 받은 레벨 업적만큼은 되돌려요 (서버에서 '이 값보다 작으면'만 올려요)
+  function repairLevel() {
+    const a = U.achievements || {};
+    let lv = 1, st = 0;
+    ACHS.forEach((x) => { if (!a[x.id]) return; if (x.key === 'level') lv = Math.max(lv, x.need); if (x.key === 'stars') st = Math.max(st, x.need); });
+    const floor = st ? xpForLevel(MAX_LEVEL) + st * STAR_XP : xpForLevel(lv);
+    if ((U.xp || 0) >= floor) return;
+    U.xp = floor + pendingXp;
+    db.set(userPath(), {}, { xpMin: floor }).catch(() => {});
+    setTimeout(() => { if (U) toast(`레벨을 되찾았어요 · Lv.${levelOf(U.xp)}`, null, 4000); }, 1500);
   }
 
   /* ====================== 친구 코드 ====================== */
@@ -1048,17 +1330,23 @@
     for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
     return c;
   }
+  // 친구 코드는 서버에서 정말 내 것으로 저장된 걸 확인한 뒤에만 확정해요 (오프라인일 때 남의 코드와 겹치지 않게)
   async function ensureCode() {
     if (U.codeOk && U.friendCode) return;
-    let code = U.friendCode || makeCode();
+    if (navigator.onLine === false) return;
+    let code = U.friendCode || makeCode(), found = false;
     for (let i = 0; i < 6; i++) {
       let ex = null;
-      try { ex = await db.get(`${C.codes}/${code}`); } catch (e) { ex = null; }
-      if (!ex || ex.uid === me.uid) break;
+      try { ex = await db.get(`${C.codes}/${code}`, { fresh: true, raw: true }); } catch (e) { return; }
+      if (!ex || ex.uid === me.uid) { found = true; break; }
       code = makeCode();
     }
-    await db.set(`${C.codes}/${code}`, { uid: me.uid, nickname: U.nickname });
-    await saveUser({ friendCode: code, codeOk: true });
+    if (!found) return;
+    try { await db.set(`${C.codes}/${code}`, { uid: me.uid, nickname: U.nickname }); } catch (e) { return; }
+    let chk = null;
+    try { chk = await db.get(`${C.codes}/${code}`, { fresh: true, raw: true }); } catch (e) { chk = null; }
+    const ok = !!(chk && chk.uid === me.uid);
+    if (ok || U.friendCode !== code) await saveUser(ok ? { friendCode: code, codeOk: true } : { friendCode: code });
   }
 
   /* ====================== 앱 진입 ====================== */
@@ -1096,6 +1384,7 @@
     if (!data || data.onboarded === false) { location.reload(); return; }
     if (!data.onboarded) return;   // 일부만 온 문서는 무시해요
     U = normalize(data);
+    U.xp = Math.max(0, (U.xp || 0) + pendingXp);   // 아직 저장에 싣지 않은 경험치는 그대로
     clearTimeout(syncTimer);
     syncTimer = setTimeout(async () => {
       if (!U) return;
@@ -1121,6 +1410,7 @@
     ui.monthOff = U.trackStart < monthRange(monthKey(now()))[0] ? 1 : 0;
     ui.recTab = 'report'; ui.year = null;
     F.loaded = false;
+    repairLevel();
     migrateExamReviews();
     switchTab('home');
     startTick();
@@ -1207,32 +1497,35 @@
     let gained = 0;
     const fields = {};
     const cels = [];
-    if (hours > (U.xpHours || 0)) { gained += Math.round((hours - (U.xpHours || 0)) * XP.hour * x); fields.xpHours = hours; U.xpHours = hours; }
+    if (hours > (U.xpHours || 0)) { gained += Math.round((hours - (U.xpHours || 0)) * XP.hour * x); fields.xpHours = hours; }
     MILESTONES.forEach((m) => {
       if (ms >= m.ms && !U.badges[m.id]) {
-        U.badges[m.id] = now(); fields.badges = U.badges;
+        fields.badges = { ...(fields.badges || {}), [m.id]: now() };
         const b = Math.round(m.bonus * x); gained += b;
         cels.push({ medal: m.short, kicker: '배지 획득', title: `${m.label} 버티기 성공!`, sub: `${m.label} 동안 한 번도 무너지지 않았어요.`, xp: b });
       }
     });
     const cb = U.comeback;
     if (cb && cb.startAt === U.startAt && curMs() >= cb.targetMs) {
-      U.comeback = null; fields.comeback = null;
+      fields.comeback = null;
       const today = dateKey(now());
       if (U.comebackDay !== today) {
         const b = Math.round(XP.comeback * x); gained += b;
-        U.comebackDone = (U.comebackDone || 0) + 1; fields.comebackDone = U.comebackDone;
-        U.comebackDay = today; fields.comebackDay = today;
+        fields.comebackDone = (U.comebackDone || 0) + 1;
+        fields.comebackDay = today;
         cels.push({ medal: '↻', kind: 'alt', kicker: '재도전 목표 달성', title: `${fmtDur(cb.targetMs)} 버텼어요!`, sub: '종료 후 다시 일어섰어요. 이 기세 그대로 가요.', xp: b });
       }
     }
     if (!Object.keys(fields).length) return;
     progressBusy = true;
-    if (gained) { await addXp(gained); fields.xp = U.xp; }
-    cels.forEach(celebrate);
-    try { await saveUser(fields); } catch (e) {}
+    try {
+      if (gained) { await addXp(gained); fields.xp = U.xp; }
+      cels.forEach(celebrate);
+      const p = saveUser(fields);   // 화면(U)에는 바로 들어가요
+      progressBusy = false;
+      await p;
+    } catch (e) {} finally { progressBusy = false; }
     savePublic();
-    progressBusy = false;
     if (ui.tab === 'home') { if (cels.length) renderHome(); else renderLevelCard(); }
     if (cels.length) checkAchievements();
   }
@@ -1280,18 +1573,29 @@
     for (let d = Math.max(weekStart(now()), dayStart(U.trackStart)); d <= dayStart(now()); d = addDays(d, 1)) if (calmDay(d)) n++;
     return n;
   }
-  // 어제가 고요한 날이었으면 오늘 앱을 열 때 보너스
+  // 고요한 날이었으면 다음에 앱을 열 때 보너스 (며칠 못 열었어도 최근 7일 안이면 받아요)
   let calmBusy = false;
   async function checkCalm() {
     if (!U || calmBusy) return;
-    const y = addDays(dayStart(now()), -1), yk = dateKey(y);
-    if (dailyOf(yk).calmXp || !calmDone(y) || y < dayStart(U.rewardFrom || 0)) return;
+    const t0 = dayStart(now()), days = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = addDays(t0, -i);
+      if (d < dayStart(U.rewardFrom || 0)) break;
+      const k = dateKey(d);
+      if (!dailyOf(k).calmXp && calmDone(d)) days.push(k);
+    }
+    if (!days.length) return;
     calmBusy = true;
     try {
-      const got = await gain(XP.calm);
-      await setDaily(yk, { calmXp: got }, { xp: U.xp });
+      let total = 0;
+      const patch = {};
+      for (const k of days) { const got = await gain(XP.calm); total += got; patch[k] = { calmXp: got }; }
+      await saveUser({ daily: patch, xp: U.xp }).catch(() => {});
       savePublic();
-      celebrate({ medal: '☾', kind: 'calm', kicker: '고요한 날', title: '어제는 고요한 하루였어요', sub: '종료도 충동도 없었어요.', xp: got });
+      const yk = dateKey(addDays(t0, -1));
+      celebrate(days.length === 1 && days[0] === yk
+        ? { medal: '☾', kind: 'calm', kicker: '고요한 날', title: '어제는 고요한 하루였어요', sub: '종료도 충동도 없었어요.', xp: total }
+        : { medal: '☾', kind: 'calm', kicker: '고요한 날', title: `고요한 날 ${days.length}일`, sub: '종료도 충동도 없던 날들의 보너스예요.', xp: total });
     } finally { calmBusy = false; }
     if (ui.tab === 'home') renderLevelCard();
     checkGoals(); checkAchievements();
@@ -1305,18 +1609,13 @@
     if (d.pledge) return [{ id: 'p0', text: d.pledge, check: d.check || null, xp: d.checkXp || 0 }];
     return [];
   }
-  async function setDaily(k, patch, extra = {}) {
-    try { await saveDaily(k, patch, extra); } catch (e) {}
+  async function setDaily(k, patch, extra = {}, meta) {
+    try { await saveDaily(k, patch, extra, meta); } catch (e) {}
   }
   // 하루 기록(daily)은 통째로 보내지 않고 그날의 바뀐 칸만 보내요.
   // 오래된 화면(다른 기기, 늦게 열린 앱)이 저장해도 다른 날·다른 칸의 기록을 덮어쓰지 않아요.
-  async function saveDaily(k, patch, extra = {}) {
-    const daily = { ...(U.daily || {}) };
-    daily[k] = { ...(daily[k] || {}), ...patch };
-    U.daily = daily;
-    Object.assign(U, extra);
-    try { await db.set(userPath(), { daily: { [k]: patch }, ...extra }); }
-    catch (e) { toast(navigator.onLine === false ? '인터넷이 끊겨 있어요. 연결되면 다시 저장해요.' : '저장하지 못했어요. 다시 시도해 주세요.'); throw e; }
+  async function saveDaily(k, patch, extra = {}, meta) {
+    return saveUser({ ...extra, daily: { [k]: patch } }, meta);
   }
 
   /* ====================== 이번 달 목표 (여러 개) ====================== */
@@ -1374,19 +1673,20 @@
     if (goalsAgain) { goalsAgain = false; checkGoals(); }
   }
   async function checkGoalsRun() {
-    const all = { ...U.monthGoals };
+    const all = {};
     let changed = false;
-    for (const mk of Object.keys(all)) {
-      const list = all[mk].map((g) => ({ ...g }));
+    for (const mk of Object.keys(U.monthGoals)) {
+      const list = U.monthGoals[mk].map((g) => ({ ...g }));
+      let ch = false;
       for (const g of list) {
         const st = goalStatusOf(mk, g);
         if (g.deleted || g.rewarded || st.state !== 'done') continue;
-        g.rewarded = now(); changed = true;
+        g.rewarded = now(); changed = true; ch = true;
         const got = await gainFixed(goalXp(g, mk));
         const m = Number(mk.split('-')[1]);
         celebrate({ medal: `${m}월`, kind: 'alt', kicker: '이번 달 목표 달성', title: `${goalLabel(g)} 달성!`, sub: `${m}월 목표를 지켜냈어요.`, xp: got });
       }
-      all[mk] = list;
+      if (ch) all[mk] = list;
     }
     if (changed) { try { await saveUser({ monthGoals: all, xp: U.xp }); } catch (e) {} savePublic(); checkAchievements(); if (ui.tab === 'home') renderHome(); }
   }
@@ -1435,7 +1735,7 @@
       const c = el.querySelector('[data-close]'); if (c) c.onclick = closeSheet;
       const d = el.querySelector('[data-del]');
       if (d) d.onclick = async () => {
-        const goals = { ...U.monthGoals, [mk]: list.map((g) => (g.id === cur.id ? { ...g, deleted: now() } : g)) };
+        const goals = { [mk]: list.map((g) => (g.id === cur.id ? { ...g, deleted: now() } : g)) };
         closeSheet(); await saveUser({ monthGoals: goals }).catch(() => {}); renderHome();
       };
       el.querySelector('[data-ok]').onclick = async () => {
@@ -1450,7 +1750,7 @@
         const kept = list.filter((x) => !(x.deleted && x.type === type));
         const next = cur ? kept.map((x) => (x.id === cur.id ? g : x)) : [...kept, g];
         closeSheet();
-        try { await saveUser({ monthGoals: { ...U.monthGoals, [mk]: next } }); toast(cur ? '목표를 바꿨어요' : '목표를 추가했어요'); } catch (e) {}
+        try { await saveUser({ monthGoals: { [mk]: next } }); toast(cur ? '목표를 바꿨어요' : '목표를 추가했어요'); } catch (e) {}
         renderHome(); checkGoals();
       };
     });
@@ -1852,9 +2152,10 @@
     }
   }
 
+  let journalBusy = false;
   async function saveJournal() {
     const inp = $('journal-input');
-    if (!inp) return;
+    if (!inp || journalBusy) return;
     const text = (inp.value || '').trim();
     const yk = yesterdayOpen();
     if (ui.jDay === 'y' && !yk) { ui.jDay = 't'; toast('어제 한 줄은 정오까지 쓸 수 있어요'); renderHome(); return; }
@@ -1864,15 +2165,25 @@
     if (score == null) { toast('별점을 매겨 주세요'); return; }
     if (!text) { toast('한 줄이라도 적어주세요'); return; }
     const entry = { text, score, q: (prev && prev.q) || questionFor(key), updatedAt: now() };
+    journalBusy = true;
     try {
-      await db.set(`${userPath()}/journal/${key}`, entry);
+      // 화면에 먼저 넣어요 (두 번 눌러도 경험치는 한 번만)
       S.journal[key] = { ...(prev || {}), id: key, ...entry };
       ui.editJournal = false; ui.score = null; ui.jDay = 't';
       inp.value = '';
+      const pr = db.set(`${userPath()}/journal/${key}`, entry);
       const js = journalStreak();
-      if (!prev) { const got = await gainFixed(XP.journal); await saveUser({ xp: U.xp }); savePublic(); toast(js > 1 ? `${js}일 연속! (+${got} XP)` : `저장했어요 (+${got} XP)`); } else toast('고쳤어요');
+      // 그날 한 줄 경험치를 이미 받았으면(다른 기기 포함) 다시 주지 않아요
+      if (!prev && !dailyOf(key).jXp) {
+        const got = await gainFixed(XP.journal);
+        await saveDaily(key, { jXp: got }, { xp: U.xp });
+        savePublic();
+        toast(js > 1 ? `${js}일 연속! (+${got} XP)` : `저장했어요 (+${got} XP)`);
+      } else toast(prev ? '고쳤어요' : '저장했어요');
+      await pr;
       checkGoals(); checkAchievements();
     } catch (e) { toast('저장하지 못했어요'); }
+    finally { journalBusy = false; }
     renderHome();
   }
 
@@ -1949,7 +2260,7 @@
     if (!isActive()) { hide($('modal-reset')); return; }
     const t = now();
     const dur = t - U.startAt;
-    const prev = { startAt: U.startAt, bestMs: U.bestMs || 0, xpHours: U.xpHours || 0, comeback: U.comeback || null, recordBreaks: U.recordBreaks || 0, endedAt: U.endedAt || null, lastDur: U.lastDur || 0, multFloor: U.multFloor || 0, xp: U.xp || 0, honestDay: U.honestDay || '' };
+    const prev = { startAt: U.startAt, bestMs: U.bestMs || 0, xpHours: U.xpHours || 0, comeback: U.comeback || null, recordBreaks: U.recordBreaks || 0, endedAt: U.endedAt || null, lastDur: U.lastDur || 0, multFloor: U.multFloor || 0, honestDay: U.honestDay || '' };
     const multFloor = Math.max(0, curTier() - 1);
     const today = dateKey(t);
     const honest = dur >= HOUR && U.honestDay !== today ? XP.honest : 0;
@@ -1960,21 +2271,24 @@
       const id = await db.add(`${userPath()}/streaks`, streak);
       S.streaks.push({ id, ...streak });
       if (honest) await addXp(honest);
-      await saveUser({ startAt: null, endedAt: t, lastDur: dur, bestMs: Math.max(prev.bestMs, dur), xpHours: 0, comeback: null, urge: null, recordBreaks, multFloor, xp: U.xp, ...(honest ? { honestDay: today } : {}) });
+      // 종료는 '시작 시각'이 그대로일 때만 (다른 기기에서 이미 종료·재시작했으면 덮어쓰지 않아요)
+      await saveUser({ startAt: null, endedAt: t, lastDur: dur, bestMs: Math.max(prev.bestMs, dur), xpHours: 0, comeback: null, urge: null, recordBreaks, multFloor, xp: U.xp, ...(honest ? { honestDay: today } : {}) }, { guard: ['startAt', 'honestDay'] });
       savePublic(true);
       hide($('modal-reset'));
       if (ui.tab === 'home') renderHome(); else if (ui.tab === 'records') renderRecords();
-      toast(honest ? `솔직하게 기록했어요 +${honest} XP · 보상 ${fmtX(TIER_X[multFloor])} 유지` : `종료했어요 · 보상 ${fmtX(TIER_X[multFloor])} 유지`, () => undoEnd(id, prev), 10000);
+      toast(honest ? `솔직하게 기록했어요 +${honest} XP · 보상 ${fmtX(TIER_X[multFloor])} 유지` : `종료했어요 · 보상 ${fmtX(TIER_X[multFloor])} 유지`, () => undoEnd(id, prev, honest), 10000);
       checkAchievements();
     } catch (e) { $('reset-error').textContent = '저장하지 못했어요. 다시 시도해 주세요.'; }
     $('reset-confirm').disabled = false;
   }
 
-  async function undoEnd(id, prev) {
+  async function undoEnd(id, prev, honest) {
+    if (isActive()) return toast('이미 다시 시작했어요');
     try {
       await db.del(`${userPath()}/streaks/${id}`);
       S.streaks = S.streaks.filter((s) => s.id !== id);
-      await saveUser(prev);
+      if (honest) await addXp(-honest);
+      await saveUser({ ...prev, xp: U.xp }, { guard: ['startAt'] });
       savePublic(true);
       if (ui.tab === 'home') renderHome(); else if (ui.tab === 'records') renderRecords();
       toast('되돌렸어요');
@@ -2167,8 +2481,8 @@
     await checkExams();
     if (!U) return;
     const st = achStats();
-    const got = { ...(U.achievements || {}) };
-    const fresh = ACHS.filter((a) => !got[a.id] && st[a.key] >= a.need);
+    const have = U.achievements || {}, got = {};
+    const fresh = ACHS.filter((a) => !have[a.id] && st[a.key] >= a.need);
     if (fresh.length) {
       let xp = 0;
       fresh.forEach((a) => { got[a.id] = now(); xp += TIERS[a.tier].xp; });
@@ -2916,6 +3230,7 @@
     // 아직 안 열린 편지는 남겨요
     data.letters = (U.letters || []).filter((l) => !l.openedAt);
     data.exams = U.exams.map((e) => { const x = { ...e }; delete x.evaluated; delete x.clean; return x; });
+    pendingXp = 0;
     await db.put(base, data);
     hide($('urge')); hide($('modal-reset'));
     celQueue.length = 0; celOn = false; hide($('celebrate'));
@@ -2955,6 +3270,7 @@
       await Promise.all(docs.map((d) => db.del(`${base}/${col}/${d.id}`)));
     }
     const keep = { nickname: U.nickname, friendCode: U.friendCode || '', codeOk: !!U.codeOk, onboarded: false };
+    pendingXp = 0;
     await db.put(base, keep);
     await db.set(pubPath(), { nickname: U.nickname, startAt: null, paused: true, bestMs: null, level: null, badges: null, weekOk: null, weekCalm: null, weekKey: weekKey(), updatedAt: now() }).catch(() => {});
     stopWatch();
@@ -3329,9 +3645,10 @@
         if (prev && prev.next && !kept) { $('wr-err').textContent = '지난주 한 가지를 지켰는지 골라주세요.'; return; }
         if (!good || !next) { $('wr-err').textContent = '두 질문 모두 적어주세요.'; return; }
         closeSheet();
-        const got = xpOk ? await gainFixed(XP.weekReview) : 0;
-        const rec = { ...cur, good, next, prevKept: prev && prev.next ? kept : null, at: cur.at || now(), xp: (cur.xp || 0) + got };
-        try { await saveUser({ weekReviews: { ...U.weekReviews, [k]: rec }, xp: U.xp }); } catch (e) {}
+        const now0 = U.weekReviews[k] || {};   // 창을 연 사이 다른 기기에서 쓴 회고가 있으면 그걸 기준으로
+        const got = !U.weekReviews[k] && weekReviewXpOk(k) ? await gainFixed(XP.weekReview) : 0;
+        const rec = { ...now0, good, next, prevKept: prev && prev.next ? kept : null, at: now0.at || now(), xp: (now0.xp || 0) + got };
+        try { await saveUser({ weekReviews: { [k]: rec }, xp: U.xp }); } catch (e) {}
         savePublic();
         toast(got ? `회고를 남겼어요 (+${got} XP)` : '회고를 저장했어요');
         refreshViews(); checkAchievements();
@@ -3364,9 +3681,10 @@
         const best = $('mr-best').value.trim(), regret = $('mr-regret').value.trim(), change = $('mr-change').value.trim();
         if (!best || !regret || !change) { $('mr-err').textContent = '세 질문 모두 적어주세요.'; return; }
         closeSheet();
-        const got = xpOk ? await gainFixed(XP.monthReview) : 0;
-        const rec = { ...cur, best, regret, change, at: cur.at || now(), xp: (cur.xp || 0) + got };
-        try { await saveUser({ monthReviews: { ...U.monthReviews, [mk]: rec }, xp: U.xp }); } catch (e) {}
+        const now0 = U.monthReviews[mk] || {};
+        const got = !U.monthReviews[mk] && monthReviewXpOk(mk) ? await gainFixed(XP.monthReview) : 0;
+        const rec = { ...now0, best, regret, change, at: now0.at || now(), xp: (now0.xp || 0) + got };
+        try { await saveUser({ monthReviews: { [mk]: rec }, xp: U.xp }); } catch (e) {}
         savePublic();
         const canExp = !activeExp() && nextMonthKey(mk) === monthKey(now());
         toast(got ? `회고를 남겼어요 (+${got} XP)` : '회고를 저장했어요', canExp ? () => openExpSheet(change) : null, canExp ? 6000 : 2600, '실험으로');
@@ -3457,7 +3775,7 @@
         .sort((a, b) => b.st.pe - a.st.pe)[0];
       if (cand) add[cand.e.id] = { good: '', note: '', at: t, xp: 0, lost: true, sig: exSig(cand.e) };
     }
-    if (Object.keys(add).length) saveUser({ examReviews: { ...(U.examReviews || {}), ...add } }).catch(() => {});
+    if (Object.keys(add).length) saveUser({ examReviews: add }).catch(() => {});
   }
   function examReviewDue() {
     return U.exams.map((e) => ({ e, st: examStatus(e) }))
@@ -3492,11 +3810,11 @@
   async function saveExamReview(id, skip) {
     const e = U.exams.find((x) => x.id === id);
     if (!e || exRvOf(e)) return;
-    if (skip) { await saveUser({ examReviews: { ...U.examReviews, [id]: { skip: true, at: now(), sig: exSig(e) } } }).catch(() => {}); return renderHome(); }
+    if (skip) { await saveUser({ examReviews: { [id]: { skip: true, at: now(), sig: exSig(e) } } }).catch(() => {}); return renderHome(); }
     const good = ($('ex-good').value || '').trim(), note = ($('ex-note').value || '').trim();
     if (!good || !note) { toast('두 질문 모두 적어주세요'); return; }
     const got = await gainFixed(XP.examReview);
-    try { await saveUser({ examReviews: { ...U.examReviews, [id]: { good, note, at: now(), xp: got, sig: exSig(e) } }, xp: U.xp }); } catch (err) {}
+    try { await saveUser({ examReviews: { [id]: { good, note, at: now(), xp: got, sig: exSig(e) } }, xp: U.xp }); } catch (err) {}
     savePublic();
     toast(`시험 회고를 남겼어요 (+${got} XP)`);
     renderHome(); checkAchievements();
@@ -3720,6 +4038,7 @@
     const inp = $(inputId), v = inp && inp.value.trim();
     if (!v) return;
     if (U.whys.length >= WHY_MAX) return toast(`이유는 ${WHY_MAX}개까지예요`);
+    if (U.whys.includes(v)) return toast('이미 적어 둔 이유예요');
     try { await saveUser({ whys: [...U.whys, v], whyAsked: true }); toast('이유를 적어 뒀어요. 흔들릴 때 보여드릴게요'); } catch (e) {}
     refreshViews(); checkAchievements();
   }
@@ -3920,7 +4239,7 @@
     const strip = (arr) => arr.map((x) => ({ ...x }));
     return {
       app: 'FocusFill', kind: 'backup', v: 1, appVersion: APP_VERSION, exportedAt: now(), id: idOf(me.email),
-      user: JSON.parse(JSON.stringify(U)),
+      user: (() => { const u = JSON.parse(JSON.stringify(U)); ['_t', '_w', '_ops', '_ep'].forEach((k) => { delete u[k]; }); return u; })(),
       streaks: strip(S.streaks), urges: strip(S.urges), journal: Object.values(S.journal).map((j) => ({ ...j })), focus: strip(S.focus),
     };
   }
@@ -3964,7 +4283,7 @@
       const x = {};
       if (Array.isArray(d.pledges)) x.pledges = d.pledges.map(pl).filter(Boolean);
       if (typeof d.pledge === 'string') { x.pledge = str(d.pledge, 60); x.check = ['yes', 'no'].includes(d.check) ? d.check : null; x.checkXp = numOr(d.checkXp, 0); }
-      ['att', 'pledgeXpCount', 'calmXp', 'focusXpBase', 'qAlt'].forEach((k) => { if (isNum(d[k])) x[k] = d[k]; });
+      ['att', 'pledgeXpCount', 'calmXp', 'focusXpBase', 'qAlt', 'jXp'].forEach((k) => { if (isNum(d[k])) x[k] = d[k]; });
       if (d.review && typeof d.review === 'object') x.review = d.review.skip ? { skip: true, at: numOr(d.review.at, 0) } : { before: str(d.review.before, 80), next: str(d.review.next, 80), at: numOr(d.review.at, 0), xp: numOr(d.review.xp, 0) };
       return x;
     });
@@ -4073,6 +4392,7 @@
       }));
     }
     const user = { ...d.user, friendCode: U.friendCode || '', codeOk: !!U.codeOk, onboarded: true, urge: null, focus: null, lastBackupAt: now() };
+    pendingXp = 0;
     await db.put(base, user);
     hide($('urge')); hide($('modal-reset')); focusUi(false);
     celQueue.length = 0; celOn = false; hide($('celebrate'));
