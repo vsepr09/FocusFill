@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.7.9';
+  const APP_VERSION = '1.8.0';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -625,6 +625,8 @@
       },
       async list(col) { return children(col); },
       async query(col, field, value) { return children(col).filter((d) => d[field] === value); },
+      onStatus(cb) { cb(false); },
+      async flush() { return true; },
     };
   }
 
@@ -702,7 +704,12 @@
     const later = () => { if (!timer) timer = setTimeout(flush, 400); };
     addEventListener('pagehide', () => { if (timer) flush(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden && timer) flush(); });
-    const saveOut = () => { try { localStorage.setItem(OUT, JSON.stringify(out)); } catch (e) {} };
+    // 보낼 목록은 꼭 남아야 해요. 저장 공간이 모자라면 다시 받을 수 있는 '받아 둔 기록'을 먼저 비우고 다시 저장해요
+    const saveOut = () => {
+      const txt = JSON.stringify(out);
+      try { localStorage.setItem(OUT, txt); }
+      catch (e) { try { localStorage.removeItem(KEY); localStorage.setItem(OUT, txt); } catch (er) {} }
+    };
     const isChild = (p, col) => p.length > col.length + 1 && p.startsWith(col + '/') && p.indexOf('/', col.length + 1) < 0;
     return {
       getDoc(path) { return Object.prototype.hasOwnProperty.call(c.docs, path) ? jclone(c.docs[path]) : undefined; },
@@ -748,6 +755,9 @@
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const offline = () => navigator.onLine === false;
     const mine = () => store.ops().filter((op) => op.u === curUid);
+    // 서버에 닿지 않는 상태(와이파이는 연결됐는데 인터넷이 안 되는 경우 포함)를 화면에 알려요
+    let stuck = false, statusCb = null;
+    const setStuck = (v) => { if (stuck !== v) { stuck = v; if (statusCb) statusCb(v); } };
     // 읽기: 서버에서 받고, 인터넷이 없거나 오래 걸리면 기기에 저장해 둔 기록으로.
     // 아직 서버에 못 올린 저장(보낼 목록)을 읽은 결과 위에 겹쳐요 → 화면은 항상 내가 마지막으로 한 그대로
     function overlayDoc(path, v) {
@@ -770,14 +780,17 @@
     async function readDoc(path, label, fresh) {
       return overlayDoc(path, await readDocRaw(path, label, fresh));
     }
-    async function readList(col, label) {
-      return overlayList(col, await readListRaw(col, label));
+    async function readList(col, label, fresh) {
+      return overlayList(col, await readListRaw(col, label, fresh));
     }
     async function readDocRaw(path, label, fresh) {
       const cached = store.getDoc(path);
       if (fresh) {
         // 서버에서 직접 받은 진짜 문서
-        const d = await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, label);
+        if (offline()) throw new Error('offline');
+        let d;
+        try { d = await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, label); } catch (e) { setStuck(true); throw e; }
+        setStuck(false);
         const v = d.exists ? d.data() : null;
         store.putDoc(path, v);
         return v;
@@ -787,20 +800,30 @@
       try {
         // 기기에 받아 둔 기록이 있으면 오래 기다리지 않아요 (서버 기록은 연결되면 바로 다시 받아요)
         const d = await withTimeout(fs.doc(path).get({ source: 'server' }), cached !== undefined ? 3500 : READ_MS, label);
+        setStuck(false);
         const v = d.exists ? d.data() : null;
         store.putDoc(path, v);
         return v;
-      } catch (e) { slowAt = Date.now(); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
+      } catch (e) { slowAt = Date.now(); setStuck(true); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
     }
-    async function readListRaw(col, label) {
+    // fresh: 꼭 서버에서 (기록 지우기·가져오기처럼 빠짐없이 알아야 할 때)
+    async function readListRaw(col, label, fresh) {
       const cached = store.list(col);
+      if (fresh) {
+        if (offline()) throw new Error('offline');
+        let l;
+        try { l = docs(await withTimeout(fs.collection(col).get({ source: 'server' }), READ_MS * 2, label)); } catch (e) { setStuck(true); throw e; }
+        setStuck(false); store.setList(col, l);
+        return l;
+      }
       if (offline() && cached !== undefined) { fromStore = true; return cached; }
       if (slowNow() && cached !== undefined) { fromStore = true; return cached; }
       try {
         const list = docs(await withTimeout(fs.collection(col).get({ source: 'server' }), cached !== undefined ? 3500 : READ_MS, label));
+        setStuck(false);
         store.setList(col, list);
         return list;
-      } catch (e) { slowAt = Date.now(); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
+      } catch (e) { slowAt = Date.now(); setStuck(true); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
     }
 
     // ---------- 보내기 ----------
@@ -856,7 +879,7 @@
     }
     function later() {
       clearTimeout(retryT);
-      wait = Math.min(60000, wait ? wait * 2 : 2000);
+      wait = Math.min(20000, wait ? wait * 2 : 2000);   // 다시 연결되면 늦어도 20초 안에 올라가요
       retryT = setTimeout(() => { retryT = null; pump(); }, wait);
     }
     const NET_ERR = ['unavailable', 'deadline-exceeded', 'aborted', 'resource-exhausted', 'cancelled', 'unknown', 'internal', 'unauthenticated'];
@@ -870,13 +893,14 @@
           const list = mine();
           const op = list[0];
           if (!op) { wait = 0; break; }
-          if (!op.at || Date.now() - op.at > 14 * DAY) { finish(op); continue; }   // 2주 넘게 못 보낸 저장은 버려요
+          // 오래 오프라인이었어도 두 달 안의 저장은 올려요 (서버 기록과 맞춰 보고 넣으니 오래돼도 안전해요). 예전 버전 저장은 2주까지
+          if (!op.at || Date.now() - op.at > (op.id ? 60 : 14) * DAY) { finish(op); continue; }
           // 한 줄·공개 정보처럼 통째로 바뀌는 기록: 뒤에 같은 걸 또 저장했으면 마지막 것만 보내요
           if (op.k !== 'del' && op.data && isNumber(op.data.updatedAt) && list.some((o) => o !== op && o.path === op.path && o.at > op.at)) { finish(op); continue; }
           if (offline()) { later(); break; }
           try {
-            await withTimeout(exec(op), 15000, '저장');
-            finish(op); wait = 0;
+            await withTimeout(exec(op), 10000, '저장');
+            finish(op); wait = 0; setStuck(false);
           } catch (e) {
             const code = e && e.code;
             const hard = HARD_ERR.includes(code);
@@ -884,6 +908,7 @@
             // 인터넷 문제가 아닌 오류가 계속되면(문서 모양이 이상한 경우 등) 몇 번 뒤 그 저장만 버려요 → 뒤의 저장이 막히지 않게
             if (!hard && !slow && !NET_ERR.includes(code)) { op.tries = (op.tries || 0) + 1; store.touch(); }
             if (hard || (op.tries || 0) >= 6) { console.warn('저장 실패', e); finish(op, e); continue; }
+            setStuck(true);
             later(); break;
           }
         }
@@ -900,7 +925,10 @@
       const pr = new Promise((res, rej) => waiters.set(op.id, { res, rej }));
       pr.catch(() => {});
       kick();
-      return offline() ? Promise.resolve() : Promise.race([pr, new Promise((r) => setTimeout(r, 6000))]);
+      // 기기에 먼저 저장하고 바로 끝나요 (서버는 뒤에서). 인터넷이 느리거나 막혀도 버튼이 멈추지 않아요
+      // wait: 친구 요청처럼 서버 결과를 알아야 하는 저장은 서버 답을 기다려요 (실패하면 오류)
+      if (meta && meta.wait) return Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('서버 응답 없음')), 10000))]);
+      return Promise.resolve();
     }
     return {
       mode: 'firebase',
@@ -910,8 +938,18 @@
       signOut: () => { store.clearDocs(); return auth.signOut(); },
       // 지난번에 서버에 못 올린 저장을 보내기 시작해요 (로그인한 사람 것만, 2주 이내)
       replay(uid) {
-        store.ops().slice().forEach((op) => { if (!op.u || (op.u === uid && (!op.at || Date.now() - op.at > 14 * DAY))) store.done(op); });
+        store.ops().slice().forEach((op) => { if (!op.u || (op.u === uid && (!op.at || Date.now() - op.at > (op.id ? 60 : 14) * DAY))) store.done(op); });
         kick(true);
+      },
+      onStatus(cb) { statusCb = cb; cb(stuck); },
+      // 보낼 목록이 다 올라갈 때까지 기다려요 (ms 안에 못 끝나면 false)
+      flush(ms = 12000) {
+        return new Promise((res) => {
+          const t0 = Date.now();
+          kick(true);
+          const chk = () => { if (!mine().length) return res(true); if (Date.now() - t0 > ms || offline()) return res(false); setTimeout(chk, 150); };
+          chk();
+        });
       },
       pending: () => mine().length,
       stale: () => { const v = fromStore; fromStore = false; return v; },
@@ -919,34 +957,44 @@
       set: (path, data, meta) => write('set', path, data, meta),
       put: (path, data) => write('put', path, data),
       async add(col, data) { const id = fs.collection(col).doc().id; await write('put', `${col}/${id}`, data); return id; },
-      del: (path) => write('del', path, null),
+      del: (path, meta) => write('del', path, null, meta),
       // 다른 기기에서 바뀐 내용 받기 (방금 내가 저장한 그대로면 건너뜀)
       watch(path, cb) {
         watchers[path] = cb;
-        const un = fs.doc(path).onSnapshot((snap) => {
-          if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
-          slowAt = 0;   // 서버가 다시 응답해요
-          const v = snap.exists ? snap.data() : null;
-          const old = store.getDoc(path);
-          store.putDoc(path, v);
-          kick();
-          if (v && ownW.has(v._w) && old && stableStr(old) === stableStr(v)) return;
-          cb(overlayDoc(path, v));
-        }, () => {});
-        return () => { if (watchers[path] === cb) delete watchers[path]; un(); };
+        let un = null, dead = false, again = null;
+        const sub = () => {
+          un = fs.doc(path).onSnapshot({ includeMetadataChanges: true }, (snap) => {
+            if (snap.metadata.fromCache) return;
+            slowAt = 0; setStuck(false);   // 서버와 다시 연결됐어요
+            kick();
+            if (snap.metadata.hasPendingWrites) return;
+            const v = snap.exists ? snap.data() : null;
+            const old = store.getDoc(path);
+            store.putDoc(path, v);
+            if (old !== undefined && stableStr(old) === stableStr(v)) return;   // 이미 받은 그대로
+            cb(overlayDoc(path, v));
+          }, () => { if (!dead) again = setTimeout(sub, 5000); });   // 연결이 끊겨 멈추면 다시 지켜봐요
+        };
+        sub();
+        return () => { dead = true; clearTimeout(again); if (watchers[path] === cb) delete watchers[path]; if (un) un(); };
       },
       // 기록 목록(종료·참기·한 줄·집중)도 실시간으로 받아요. 내 저장이 서버에 확인되는 순간에도 한 번 더 받아요
       watchList(col, cb) {
-        return fs.collection(col).onSnapshot({ includeMetadataChanges: true }, (snap) => {
-          if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
-          slowAt = 0;
-          const list = docs(snap);
-          store.setList(col, list);
-          cb(overlayList(col, list));
-        }, () => {});
+        let un = null, dead = false, again = null;
+        const sub = () => {
+          un = fs.collection(col).onSnapshot({ includeMetadataChanges: true }, (snap) => {
+            if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
+            slowAt = 0;
+            const list = docs(snap);
+            store.setList(col, list);
+            cb(overlayList(col, list));
+          }, () => { if (!dead) again = setTimeout(sub, 5000); });
+        };
+        sub();
+        return () => { dead = true; clearTimeout(again); if (un) un(); };
       },
-      list: (col) => readList(col, '기록 목록 읽기'),
-      async query(col, field, value) { if (offline()) throw new Error('offline'); return docs(await withTimeout(fs.collection(col).where(field, '==', value).get(), 15000, '친구 정보 읽기')); },
+      list: (col, opt) => readList(col, '기록 목록 읽기', opt && opt.fresh),
+      async query(col, field, value) { if (offline()) throw new Error('offline'); return docs(await withTimeout(fs.collection(col).where(field, '==', value).get({ source: 'server' }), 8000, '친구 정보 읽기')); },
     };
   }
 
@@ -1361,7 +1409,7 @@
       code = makeCode();
     }
     if (!found) return;
-    try { await db.set(`${C.codes}/${code}`, { uid: me.uid, nickname: U.nickname }); } catch (e) { return; }
+    try { await db.set(`${C.codes}/${code}`, { uid: me.uid, nickname: U.nickname }, { wait: true }); } catch (e) { return; }
     let chk = null;
     try { chk = await db.get(`${C.codes}/${code}`, { fresh: true, raw: true }); } catch (e) { chk = null; }
     const ok = !!(chk && chk.uid === me.uid);
@@ -1432,7 +1480,7 @@
   }
   function onRemote(data) {
     if (!U || !me) return;
-    if (firstSnap && db.mode === 'firebase') { firstSnap = false; if (!(db.stale && db.stale()) && JSON.stringify(data && data.startAt) === JSON.stringify(U.startAt) && data && data.xp === U.xp) return; }
+    // (저장소가 '이미 받은 그대로'인 알림은 걸러서 보내요 → 여기 오는 건 모두 새로 바뀐 내용)
     firstSnap = false;
     if (!data || data.onboarded === false) { location.reload(); return; }
     if (!data.onboarded) return;   // 일부만 온 문서는 무시해요
@@ -3013,11 +3061,12 @@
       F.loaded = true; F.msg = '';
       if (F.list.length > (U.maxFriends || 0)) { saveUser({ maxFriends: F.list.length }).catch(() => {}); checkAchievements(); }
     } catch (e) {
-      F.msg = '친구 정보를 불러오지 못했어요.';
+      F.msg = navigator.onLine === false ? '인터넷에 연결되면 친구 정보를 볼 수 있어요.' : '친구 정보를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.';
     }
     F.loading = false;
     refreshFriendDot();
-    if (ui.tab === 'friends' && !silent) renderFriends();
+    // 친구 탭을 보고 있으면 결과(또는 못 불러온 이유)를 바로 보여줘요
+    if (ui.tab === 'friends') renderFriendsKeepInput();
   }
   function refreshFriendDot() { $('friend-dot').classList.toggle('hidden', !F.incoming.length); }
 
@@ -3084,7 +3133,7 @@
             ${p.isMe ? '' : `<button class="icon-btn small" data-act="remove-friend" data-id="${esc(p.reqId)}" data-n="${esc(p.nickname)}" type="button" aria-label="친구 삭제">${ICON.x}</button>`}
           </div>`).join('')}</div>
         ${!F.list.length && F.loaded ? '<p class="hint">아직 친구가 없어요</p>' : ''}
-        ${!F.loaded ? '<p class="hint">불러오는 중…</p>' : ''}
+        ${!F.loaded && !F.msg ? '<p class="hint">불러오는 중…</p>' : ''}
       </section>`;
   }
 
@@ -3101,9 +3150,9 @@
     if (F.outgoing.some((r) => r.to === c.uid)) { err.textContent = '이미 요청을 보냈어요.'; return; }
     try {
       const rev = F.incoming.find((r) => r.from === c.uid);
-      if (rev) { await db.set(`${C.req}/${rev.id}`, { status: 'accepted', acceptedAt: now() }); toast(`${c.nickname}님과 친구가 됐어요`); }
+      if (rev) { await db.set(`${C.req}/${rev.id}`, { status: 'accepted', acceptedAt: now() }, { wait: true }); toast(`${c.nickname}님과 친구가 됐어요`); }
       else {
-        await db.set(`${C.req}/${me.uid}_${c.uid}`, { from: me.uid, to: c.uid, fromNick: U.nickname, toNick: c.nickname, status: 'pending', createdAt: now() });
+        await db.set(`${C.req}/${me.uid}_${c.uid}`, { from: me.uid, to: c.uid, fromNick: U.nickname, toNick: c.nickname, status: 'pending', createdAt: now() }, { wait: true });
         toast(`${c.nickname}님에게 친구 요청을 보냈어요`);
       }
       await loadFriends();
@@ -3255,6 +3304,7 @@
       el.querySelector('[data-close]').onclick = closeSheet;
       el.querySelector('[data-ok]').onclick = async () => {
         if ($('wipe-input').value.trim() !== '삭제') { $('wipe-err').textContent = '삭제라고 정확히 적어주세요.'; return; }
+        if (navigator.onLine === false) { $('wipe-err').textContent = '인터넷에 연결된 뒤 해 주세요.'; return; }
         const b = el.querySelector('[data-ok]'); b.disabled = true; b.textContent = '지우는 중…';
         try { await wipeDetox(); closeSheet(); }
         catch (e) { $('wipe-err').textContent = '지우지 못했어요. 인터넷 연결을 확인하고 다시 해 주세요.'; b.disabled = false; b.textContent = '기록 지우기'; }
@@ -3264,7 +3314,7 @@
   async function wipeDetox() {
     const base = userPath();
     for (const col of ['streaks', 'urges', 'journal', 'focus']) {
-      const docs = await db.list(`${base}/${col}`);
+      const docs = await db.list(`${base}/${col}`, { fresh: true });   // 서버에서 빠짐없이 받아서 지워요
       await Promise.all(docs.map((d) => db.del(`${base}/${col}/${d.id}`)));
     }
     const t = now();
@@ -3300,6 +3350,7 @@
       el.querySelector('[data-close]').onclick = closeSheet;
       el.querySelector('[data-ok]').onclick = async () => {
         if ($('wipe-input').value.trim() !== '초기화') { $('wipe-err').textContent = '초기화라고 정확히 적어주세요.'; return; }
+        if (navigator.onLine === false) { $('wipe-err').textContent = '인터넷에 연결된 뒤 해 주세요.'; return; }
         el.querySelector('[data-ok]').disabled = true;
         el.querySelector('[data-ok]').textContent = '지우는 중…';
         try { await wipeAll(); closeSheet(); }
@@ -3310,7 +3361,7 @@
   async function wipeAll() {
     const base = userPath();
     for (const col of ['streaks', 'urges', 'journal', 'focus']) {
-      const docs = await db.list(`${base}/${col}`);
+      const docs = await db.list(`${base}/${col}`, { fresh: true });   // 서버에서 빠짐없이 받아서 지워요
       await Promise.all(docs.map((d) => db.del(`${base}/${col}/${d.id}`)));
     }
     const keep = { nickname: U.nickname, friendCode: U.friendCode || '', codeOk: !!U.codeOk, onboarded: false };
@@ -4423,7 +4474,7 @@
     download(`focusfill-before-import-${dateKey(now())}.json`, JSON.stringify(backupData()));
     const base = userPath();
     for (const col of ['streaks', 'urges', 'journal', 'focus']) {
-      const docs = await db.list(`${base}/${col}`);
+      const docs = await db.list(`${base}/${col}`, { fresh: true });
       await Promise.all(docs.map((x) => db.del(`${base}/${col}/${x.id}`)));
     }
     for (const col of ['streaks', 'urges', 'journal', 'focus']) {
@@ -4581,12 +4632,17 @@
       case 'copy-code':
         try { await navigator.clipboard.writeText(U.friendCode); toast('친구 코드를 복사했어요'); } catch (e) { toast(`코드: ${U.friendCode}`); }
         return;
-      case 'add-friend': return addFriend();
-      case 'accept': try { await db.set(`${C.req}/${el.dataset.id}`, { status: 'accepted', acceptedAt: now() }); toast('친구가 됐어요'); } catch (e) { toast('수락하지 못했어요'); } return loadFriends();
-      case 'decline': case 'cancel-req': try { await db.del(`${C.req}/${el.dataset.id}`); } catch (e) { toast('처리하지 못했어요'); } return loadFriends();
+      case 'add-friend': if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 해 주세요'); return addFriend();
+      case 'accept':
+        if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 해 주세요');
+        try { await db.set(`${C.req}/${el.dataset.id}`, { status: 'accepted', acceptedAt: now() }, { wait: true }); toast('친구가 됐어요'); } catch (e) { toast('수락하지 못했어요'); } return loadFriends();
+      case 'decline': case 'cancel-req':
+        if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 해 주세요');
+        try { await db.del(`${C.req}/${el.dataset.id}`, { wait: true }); } catch (e) { toast('처리하지 못했어요'); } return loadFriends();
       case 'remove-friend':
         return confirmSheet('친구를 삭제할까요?', `${el.dataset.n}님과 서로 기록을 볼 수 없게 돼요.`, '삭제', async () => {
-          try { await db.del(`${C.req}/${el.dataset.id}`); toast('친구를 삭제했어요'); } catch (e) { toast('삭제하지 못했어요'); }
+          if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 해 주세요');
+          try { await db.del(`${C.req}/${el.dataset.id}`, { wait: true }); toast('친구를 삭제했어요'); } catch (e) { toast('삭제하지 못했어요'); }
           loadFriends();
         });
       case 'rank': F.rank = el.dataset.r; return renderFriends();
@@ -4659,7 +4715,11 @@
       case 'guide': return openGuide(false);
       case 'logout':
         if (navigator.onLine === false) return toast('인터넷에 연결된 뒤 로그아웃해 주세요. 아직 서버에 올라가지 않은 기록이 있을 수 있어요.', null, 4000);
-        if (db.pending && db.pending() > 0) return toast('아직 서버에 올라가는 중인 기록이 있어요. 잠시 뒤 다시 해 주세요.', null, 4000);
+        if (db.pending && db.pending() > 0) {
+          toast('아직 올라가지 않은 기록을 보내는 중이에요…', null, 8000);
+          if (!(await db.flush(8000))) return toast('서버에 연결되지 않아 아직 올라가지 않은 기록이 있어요. 연결된 뒤 다시 해 주세요.', null, 4500);
+          hideToast();
+        }
         return confirmSheet('로그아웃할까요?', '기록은 계정에 그대로 남아 있어요.', '로그아웃', async () => {
           clearInterval(tickTimer); U = null; await db.signOut();
         }, false);
@@ -4791,8 +4851,15 @@
     const darkMq = matchMedia('(prefers-color-scheme: dark)');
     const onScheme = () => { applyTheme(currentTheme()); if (U && ui.tab === 'home') renderLevelCard(); };
     if (darkMq.addEventListener) darkMq.addEventListener('change', onScheme); else if (darkMq.addListener) darkMq.addListener(onScheme);
-    const net = () => $('offline-bar').classList.toggle('hidden', navigator.onLine !== false);
+    // 위쪽 알림 줄: 인터넷이 끊겼거나, 와이파이는 됐는데 서버에 닿지 않을 때
+    let stuckNow = false;
+    const net = () => {
+      const off = navigator.onLine === false, bar = $('offline-bar');
+      bar.textContent = off ? '인터넷이 끊겨 있어요. 기록은 이 기기에 저장되고 연결되면 올라가요.' : '서버에 연결되지 않아요. 기록은 이 기기에 저장되고 연결되면 올라가요.';
+      bar.classList.toggle('hidden', !off && !stuckNow);
+    };
     addEventListener('online', net); addEventListener('offline', net); net();
+    if (db.onStatus) db.onStatus((v) => { stuckNow = v; net(); });
     setInterval(() => { if (U && ui.tab === 'friends' && !document.hidden) loadFriends(true).then(() => ui.tab === 'friends' && renderFriendsKeepInput()); }, 60000);
   }
   function renderFriendsKeepInput() {
