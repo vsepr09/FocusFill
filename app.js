@@ -3,7 +3,7 @@
   'use strict';
 
   /* ====================== 상수 ====================== */
-  const APP_VERSION = '1.8.0';
+  const APP_VERSION = '1.8.1';
   const EMAIL_DOMAIN = 'iasa-protein.app'; // ProFill과 같은 규칙: 아이디@도메인 (메일은 보내지 않음)
   const ID_RE = /^[a-z0-9_]{3,20}$/;
   const PROFILL_URL = 'https://vsepr09.github.io/ProFill/';
@@ -524,6 +524,7 @@
     if (!legacy && op.xpMin && x < op.xpMin) x = op.xpMin;
     if (x !== x0) upd.push([['xp'], x]);
     if (!upd.length) return { skip: bad.length ? 'conflict' : 'empty' };
+    if (legacy) upd.push([['_w'], Math.max(op.at || 0, (srv._w || 0) + 1)]);   // 서버 규칙: 이 앱의 저장은 항상 _w를 바꿔요
     if (!legacy) {
       upd.push([['_w'], op.at], [['_ops', op.id], op.at]);
       const o1 = op.at - 16 * DAY, d1 = op.at - 40 * DAY, now_ = new Set(ok.map((u) => u.key));
@@ -752,12 +753,46 @@
     let slowAt = 0;   // 서버가 방금 응답하지 않았으면 잠시 동안은 기기 저장소를 바로 써요 (로딩이 길어지지 않게)
     const slowNow = () => Date.now() - slowAt < 30000;
     let fromStore = false;   // 이번에 연 기록 중 기기 저장소에서 온 게 있는지 (서버와 다시 연결되면 새로 받아요)
+    const cacheOnly = {};    // 문서별: 지금 보이는 게 서버에서 확인 못 한 '기기에 저장된 옛 기록'인지
     const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const offline = () => navigator.onLine === false;
     const mine = () => store.ops().filter((op) => op.u === curUid);
     // 서버에 닿지 않는 상태(와이파이는 연결됐는데 인터넷이 안 되는 경우 포함)를 화면에 알려요
     let stuck = false, statusCb = null;
-    const setStuck = (v) => { if (stuck !== v) { stuck = v; if (statusCb) statusCb(v); } };
+    const setStuck = (v) => {
+      if (stuck === v) return;
+      stuck = v;
+      if (statusCb) statusCb(v);
+      if (!v) setTimeout(resync, 0);   // 다시 연결되면 놓친 변경을 한 번 새로 받아요
+    };
+    const listWatchers = {};   // 목록 경로 → 화면 갱신 함수
+    // 실시간 연결이 끊긴 사이 바뀐 게 있으면 서버에서 직접 받아서 화면에 알려요
+    let resyncing = false;
+    async function resync() {
+      if (resyncing || !curUid || offline()) return;
+      resyncing = true;
+      try {
+        for (const path of Object.keys(watchers)) {
+          const old = store.getDoc(path);
+          const d = await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, 'sync');
+          const v = d.exists ? d.data() : null;
+          store.putDoc(path, v); cacheOnly[path] = false;
+          if (watchers[path] && (old === undefined || stableStr(old) !== stableStr(v))) watchers[path](overlayDoc(path, v));
+        }
+        for (const col of Object.keys(listWatchers)) {
+          const l = docs(await withTimeout(fs.collection(col).get({ source: 'server' }), READ_MS, 'sync'));
+          store.setList(col, l);
+          if (listWatchers[col]) listWatchers[col](overlayList(col, l));
+        }
+      } catch (e) {} finally { resyncing = false; }
+    }
+    // 서버에 닿지 않는 동안 15초마다 살짝 확인해요 → 연결되면 바로 알림 줄을 내리고 기록을 맞춰요
+    setInterval(async () => {
+      if (!stuck || !curUid || offline() || document.hidden) return;
+      const path = Object.keys(watchers)[0];
+      if (!path) return;
+      try { await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, 'probe'); setStuck(false); kick(true); } catch (e) {}
+    }, 15000);
     // 읽기: 서버에서 받고, 인터넷이 없거나 오래 걸리면 기기에 저장해 둔 기록으로.
     // 아직 서버에 못 올린 저장(보낼 목록)을 읽은 결과 위에 겹쳐요 → 화면은 항상 내가 마지막으로 한 그대로
     function overlayDoc(path, v) {
@@ -791,20 +826,22 @@
         let d;
         try { d = await withTimeout(fs.doc(path).get({ source: 'server' }), READ_MS, label); } catch (e) { setStuck(true); throw e; }
         setStuck(false);
+        cacheOnly[path] = false;
         const v = d.exists ? d.data() : null;
         store.putDoc(path, v);
         return v;
       }
-      if (offline() && cached !== undefined) { fromStore = true; return cached; }
-      if (slowNow() && cached !== undefined) { fromStore = true; return cached; }
+      if (offline() && cached !== undefined) { fromStore = true; cacheOnly[path] = true; return cached; }
+      if (slowNow() && cached !== undefined) { fromStore = true; cacheOnly[path] = true; return cached; }
       try {
         // 기기에 받아 둔 기록이 있으면 오래 기다리지 않아요 (서버 기록은 연결되면 바로 다시 받아요)
         const d = await withTimeout(fs.doc(path).get({ source: 'server' }), cached !== undefined ? 3500 : READ_MS, label);
         setStuck(false);
+        cacheOnly[path] = false;
         const v = d.exists ? d.data() : null;
         store.putDoc(path, v);
         return v;
-      } catch (e) { slowAt = Date.now(); setStuck(true); if (cached !== undefined) { fromStore = true; return cached; } throw e; }
+      } catch (e) { slowAt = Date.now(); setStuck(true); if (cached !== undefined) { fromStore = true; cacheOnly[path] = true; return cached; } throw e; }
     }
     // fresh: 꼭 서버에서 (기록 지우기·가져오기처럼 빠짐없이 알아야 할 때)
     async function readListRaw(col, label, fresh) {
@@ -953,6 +990,7 @@
       },
       pending: () => mine().length,
       stale: () => { const v = fromStore; fromStore = false; return v; },
+      fromCache: (path) => !!cacheOnly[path],
       get: (path, opt) => (opt && opt.raw ? readDocRaw(path, '기록 읽기', true) : readDoc(path, '기록 읽기', opt && opt.fresh)),
       set: (path, data, meta) => write('set', path, data, meta),
       put: (path, data) => write('put', path, data),
@@ -971,6 +1009,7 @@
             const v = snap.exists ? snap.data() : null;
             const old = store.getDoc(path);
             store.putDoc(path, v);
+            cacheOnly[path] = false;
             if (old !== undefined && stableStr(old) === stableStr(v)) return;   // 이미 받은 그대로
             cb(overlayDoc(path, v));
           }, () => { if (!dead) again = setTimeout(sub, 5000); });   // 연결이 끊겨 멈추면 다시 지켜봐요
@@ -981,6 +1020,7 @@
       // 기록 목록(종료·참기·한 줄·집중)도 실시간으로 받아요. 내 저장이 서버에 확인되는 순간에도 한 번 더 받아요
       watchList(col, cb) {
         let un = null, dead = false, again = null;
+        listWatchers[col] = cb;
         const sub = () => {
           un = fs.collection(col).onSnapshot({ includeMetadataChanges: true }, (snap) => {
             if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return;
@@ -991,7 +1031,7 @@
           }, () => { if (!dead) again = setTimeout(sub, 5000); });
         };
         sub();
-        return () => { dead = true; clearTimeout(again); if (un) un(); };
+        return () => { dead = true; clearTimeout(again); if (listWatchers[col] === cb) delete listWatchers[col]; if (un) un(); };
       },
       list: (col, opt) => readList(col, '기록 목록 읽기', opt && opt.fresh),
       async query(col, field, value) { if (offline()) throw new Error('offline'); return docs(await withTimeout(fs.collection(col).where(field, '==', value).get({ source: 'server' }), 8000, '친구 정보 읽기')); },
@@ -1377,17 +1417,58 @@
     openGuide(true);
   }
 
-  /* ====================== 레벨 되찾기 (v1.7.8) ====================== */
-  // 예전 버전의 동기화 문제로 경험치가 줄어든 경우: 이미 받은 레벨 업적만큼은 되돌려요 (서버에서 '이 값보다 작으면'만 올려요)
-  function repairLevel() {
+  /* ====================== 레벨 되찾기 ====================== */
+  // 남아 있는 기록만으로 '적어도 이만큼은 받았다'는 경험치를 계산해요 (배수는 1로, 시간당은 가장 낮게 → 실제보다 많아지지 않아요)
+  function xpFloor() {
     const a = U.achievements || {};
-    let lv = 1, st = 0;
-    ACHS.forEach((x) => { if (!a[x.id]) return; if (x.key === 'level') lv = Math.max(lv, x.need); if (x.key === 'stars') st = Math.max(st, x.need); });
-    const floor = st ? xpForLevel(MAX_LEVEL) + st * STAR_XP : xpForLevel(lv);
-    if ((U.xp || 0) >= floor) return;
+    let lv = 1, st = 0, sum = 0;
+    ACHS.forEach((x) => { if (!a[x.id]) return; sum += TIERS[x.tier].xp; if (x.key === 'level') lv = Math.max(lv, x.need); if (x.key === 'stars') st = Math.max(st, x.need); });
+    const byLevel = st ? xpForLevel(MAX_LEVEL) + st * STAR_XP : xpForLevel(lv);
+    MILESTONES.forEach((m) => { if ((U.badges || {})[m.id]) sum += m.bonus; });
+    // 버틴 시간 (보상 시작 이후, 1시간에 1) · 솔직한 종료 (1시간 이상, 하루 1번)
+    const rf = Math.max(U.rewardFrom || 0, U.trackStart || 0);
+    const honestDays = new Set();
+    S.streaks.forEach((r) => {
+      const ms = r.end - Math.max(r.start, rf);
+      if (ms > 0) sum += Math.floor(ms / HOUR);
+      if (r.end >= rf && r.end - r.start >= HOUR) honestDays.add(dateKey(r.end));
+    });
+    sum += honestDays.size * XP.honest;
+    if (isActive()) sum += Math.min(U.xpHours || 0, Math.floor(rewMs() / HOUR));
+    // 출석 (연속 일수에 따라) · 다짐 · 고요한 날 · 집중 · 돌아보기
+    let run = 0, prev = null;
+    Object.keys(U.daily || {}).sort().forEach((k) => {
+      const d = U.daily[k] || {};
+      if (d.att) { run = prev && dateKey(addDays(keyTs(prev), 1)) === k ? run + 1 : 1; prev = k; sum += ATTEND_REWARDS[(run - 1) % 7]; }
+      sum += (d.pledgeXpCount || 0) * XP.pledge + pledgesOf(k).reduce((n, p) => n + (p.xp || 0), 0);
+      sum += (d.calmXp || 0) + ((d.review && d.review.xp) || 0);
+    });
+    S.focus.forEach((f) => { sum += f.xp || 0; });
+    sum += Object.keys(S.journal).length * XP.journal;
+    const wins = {};
+    S.urges.forEach((u) => { if (u.result !== 'win') return; const k = dateKey(u.at); wins[k] = (wins[k] || 0) + 1; if (u.at >= rf) sum += URGE_XP[wins[k] - 1] || 0; });
+    // 회고 · 실험 · 편지 · 교훈 다시 보기 · 목표 · 재도전
+    [U.weekReviews, U.monthReviews, U.examReviews].forEach((m) => Object.values(m || {}).forEach((r) => { sum += (r && r.xp) || 0; }));
+    (U.experiments || []).forEach((x) => { sum += x.xp || 0; });
+    (U.letters || []).forEach((l) => { sum += l.xp || 0; });
+    sum += (U.lessonRvCount || 0) * XP.lessonReview;
+    Object.values(U.monthGoals || {}).forEach((l) => (l || []).forEach((g) => { if (g && g.rewarded) sum += Math.round(XP.monthGoal * 0.6); }));
+    sum += (U.comebackDone || 0) * XP.comeback;
+    return Math.max(byLevel, sum);
+  }
+  // 서버 기록이 이보다 작으면(예전 버전·다른 앱이 옛 값을 덮어쓴 경우) 되돌려요. 서버에서 '이 값보다 작을 때만' 올리니 안전해요.
+  // 기기에 저장된 옛 기록만 보고 있을 때(서버에 못 닿을 때)는 하지 않아요
+  let repairShown = 0;
+  function repairLevel() {
+    if (!U || (db.fromCache && db.fromCache(userPath()))) return;
+    const floor = xpFloor();
+    const cur = (U.xp || 0) - pendingXp;
+    if (cur >= floor) return;
+    const before = levelOf(U.xp);
     U.xp = floor + pendingXp;
     db.set(userPath(), {}, { xpMin: floor }).catch(() => {});
-    setTimeout(() => { if (U) toast(`레벨을 되찾았어요 · Lv.${levelOf(U.xp)}`, null, 4000); }, 1500);
+    if (now() - repairShown > 60000) { repairShown = now(); setTimeout(() => { if (U) toast(`기록을 확인해서 경험치를 되찾았어요 · Lv.${before} → Lv.${levelOf(U.xp)}`, null, 5000); }, 1500); }
+    if (ui.tab === 'home') renderLevelCard();
   }
 
   /* ====================== 친구 코드 ====================== */
@@ -1486,6 +1567,7 @@
     if (!data.onboarded) return;   // 일부만 온 문서는 무시해요
     U = normalize(data);
     U.xp = Math.max(0, (U.xp || 0) + pendingXp);   // 아직 저장에 싣지 않은 경험치는 그대로
+    repairLevel();
     remoteRefresh(!db.watchList);
   }
 
@@ -4855,7 +4937,7 @@
     let stuckNow = false;
     const net = () => {
       const off = navigator.onLine === false, bar = $('offline-bar');
-      bar.textContent = off ? '인터넷이 끊겨 있어요. 기록은 이 기기에 저장되고 연결되면 올라가요.' : '서버에 연결되지 않아요. 기록은 이 기기에 저장되고 연결되면 올라가요.';
+      bar.textContent = off ? '인터넷이 끊겨 있어요. 기록은 이 기기에 저장되고 연결되면 올라가요.' : '서버에 연결되지 않아요. 이 기기에 저장된 기록으로 보여주고, 연결되면 최신 기록으로 맞춰요.';
       bar.classList.toggle('hidden', !off && !stuckNow);
     };
     addEventListener('online', net); addEventListener('offline', net); net();

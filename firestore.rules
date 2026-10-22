@@ -29,8 +29,15 @@ service cloud.firestore {
     }
 
     // 비공개: 성별, 디톡스 대상, 규칙, 리셋 이유, 메모, 참기 기록, 일기 → 나만
+    // 내 문서: 지금 앱(v1.7.8 이상)은 저장할 때마다 _w(저장 시각)나 _ep(초기화 표시)를 바꿔요.
+    // 예전 버전 앱이나 다른 앱(같은 사이트의 ProFill)이 늦게 보낸 옛 저장은 이 칸을 안 바꾸므로 막아요
+    // → 옛 경험치·옛 기록으로 덮어써지는 일이 서버에서부터 일어나지 않아요.
     match /focusfill_users/{userId} {
-      allow read, write: if signedIn() && request.auth.uid == userId;
+      allow read, delete: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && request.auth.uid == userId
+        && (request.resource.data.get('_w', 0) != resource.data.get('_w', 0)
+          || request.resource.data.get('_ep', '') != resource.data.get('_ep', ''));
     }
     match /focusfill_users/{userId}/{document=**} {
       allow read, write: if signedIn() && request.auth.uid == userId;
